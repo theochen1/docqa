@@ -12,6 +12,14 @@ import sys
 from docqa import __version__
 
 
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    # Imported lazily so `--version` and help never pay the import cost.
+    from docqa.doctor import format_report, run_checks
+
+    print(format_report(run_checks()))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="docqa",
@@ -23,6 +31,11 @@ def build_parser() -> argparse.ArgumentParser:
         version=f"docqa {__version__}",
     )
     parser.set_defaults(func=None)
+
+    sub = parser.add_subparsers(dest="command")
+    doctor = sub.add_parser("doctor", help="Fail-fast preflight: key, deps, index status.")
+    doctor.set_defaults(func=_cmd_doctor)
+
     return parser
 
 
