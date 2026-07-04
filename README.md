@@ -115,7 +115,8 @@ question ─► retrieve ─► propose ─► VERIFY ─► assemble | refuse |
 | PDF (text + scanned) | ⛔ **documented skip** — see below |
 
 **2 of the 4 originally-scoped formats (text-PDF and scanned-PDF) are a deliberate skip**, not a
-silent gap. A PDF in the corpus is logged as `skipped (unsupported format)` and reconciled in the
+silent gap. A PDF in the corpus is logged as
+`PDF skipped (deliberate scope cut — PDFs/OCR not handled in this version)` and reconciled in the
 manifest (`discovered == parsed + skipped`), never silently dropped. This was a scope decision under
 time pressure (see [Cut list](#cut-list)); the parser interface is where PDF/OCR support plugs back
 in without touching the rest of the pipeline. `sample_corpus/scanned_receipt.pdf` demonstrates the
@@ -141,7 +142,9 @@ pipeline exists, not bolted on at the end.
   stronger models are off by default for exactly this reason.
 
 Observed on the sample corpus (11 docs / 55 claims, Haiku, warm): **p50 ≈ 1.7–2.4s**. On a 20-doc /
-271-claim synthetic scale corpus the blocking gate passes at **p50 ≈ 2.4s < 5s**.
+271-claim synthetic corpus (larger than sample, below the 200-doc target) the blocking gate passes at
+**p50 ≈ 2.4s < 5s**. The infra supports 200 docs (build_corpus.py + the latency gate); I did not
+measure a full 200-doc number through the paid pipeline — see [Next 4 hours](#next-4-hours).
 
 ## Cost
 
@@ -153,7 +156,7 @@ the second query). Indexing with `--no-llm` is key-free and cost-free (local emb
 
 ## Eval
 
-`docqa eval` is a mechanical regression gate, not a vibe check. 13 cases exercise every behavior
+`docqa eval` is a mechanical regression gate, not a vibe check. 14 cases exercise every behavior
 (citation, both refusal directions, conflict + over-conflict control, injection ×4 including
 injection-in-the-real-source, entailment + red-herring, and over-refusal on punctuation-variant
 identifiers). Each assertion targets the *deterministic* layer (gold substring present, refusal

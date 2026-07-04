@@ -153,3 +153,22 @@ cases:
       on index + query), so the space-separated form recalls the claim. Must answer 'pending' + cite
       region_registry.md, and must NOT leak 'Reykjavik' (the entailment red herring still holds).
       Guards over-refusal on punctuation-variant identifiers.
+
+  - id: T24-MULTIDOC-JOIN
+    question: "In which datacenter is the platform team's primary gateway located?"
+    expect:
+      refused: false
+      gold: ["Fairbanks"]
+      cite_files: ["network_ref.md", "onboarding_email.eml"]
+    guarantees: [multihop, citations]
+    notes: >
+      Two-document synthesis: no single doc answers this. network_ref.md gives the platform team's
+      gateway codename (BLUEJAY); onboarding_email.eml gives BLUEJAY's datacenter (Fairbanks). The
+      answer MUST join both and cite BOTH files, or refuse — never fabricate a single-source guess.
+      This runs with multi-hop OFF (the default): on this small corpus retrieval co-locates both docs
+      in one pass, so the proposer joins them single-hop (meta.hops==0) — which is the correct
+      observable outcome, and what makes the join guarantee visible on the default scoreboard. The
+      bounded retrieve-read LOOP (for corpora where the docs DON'T co-locate) is a SHOULD, off by
+      default for latency; its mechanism is proven where it can't false-green in tests/test_multihop.py
+      (a stub retriever making single-hop join impossible, asserting hops==1) and end-to-end in the
+      opt-in eval/cases_multihop.yaml (DOCQA_MULTIHOP=1).

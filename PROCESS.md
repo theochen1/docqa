@@ -6,7 +6,17 @@ then executed against them in 36 commits, each one a single logical change that 
 before and after. The full suite is **214 tests passing**, the eval harness has **13 cases**, and the 
 fresh-clone gate is enforced in CI.
 
-The core architectural decision was decoupling the verification from proposal: the LLM proposes an answer as
+The primary stance I took when shaping the solution with claude was drawing inspiration from my 
+Excel Internal Representation work at Perseus. I believe that the innate power of Excel is forming
+reasoning chains from ground truth that take the form of functions mapping one cell to another. 
+Essentially every cell is some set of functions applied to a ground truth basis or assumption,
+so provenance is built directly into the workflow. This was my basis for ingesting the files as 
+claims rather than chunks, since I believe LLMs have solid reasoning over intent and semantics.
+When these claims are treated as an atomic unit within the internal representation, we can string
+them together as well as find them using traditional embedding search methods without losing the 
+real signal.
+
+Another large architectural decision was decoupling the verification from proposal: the LLM proposes an answer as
 claims-with-citations, and deterministic code verifies every edge (does the citation resolve? does
 the span entail the claim? do sources conflict?) and assembles the final answer text only from
 verified source spans. The operating principle (deterministic scripts are the gates; the LLM does
@@ -38,15 +48,17 @@ guarantees (a cited-and-verified answer or an honest refusal) on top of a probab
 
 Here are a few points I steered the model while working
 
-1. The first requirements draft ballooned toward ~50 "musts." I cut it to a 15 with an explicit tiered cut-list, and 
+1. The first requirements draft steered toward ~50 "musts." I cut it to a 15 with an explicit tiered cut-list, and 
   later made two hard cuts under time pressure which were OCR + all PDF parsing (commit `2d69c5f`) and the web layer.
-2. The model's instinct was to detect contradictions with a natural-language-inference model. I rejected 
+2. As mentioned above, I drove the idea of repersenting the atomic unit as claims rather than chunks. I think this weaponizes
+  attention and makes the system more context efficient, rather than traditional RAG that works on chunks. (somewhat related to semantic chunking)
+3. The model's instinct was to detect contradictions with a natural-language-inference model. I rejected 
   that: small NLI models score "15 days" vs "20 days" as merely *neutral*, so it would struggle to perform on basic
   semantic reasoning that was natural for LLMs, so I wired in Claude Haiku at the ingestion step to process each document
   into its claims.
-3. An early plan measured latency on the tiny sample corpus. I made sure that we documented this as a blocker until we 
+4. An early plan measured latency on the tiny sample corpus. I made sure that we documented this as a blocker until we 
   run it against a real corpus.
-4. I hand tested a limitation while using the CLI. I asked "what's the status of gw north 4" and got a spurious refusal, 
+5. I hand tested a limitation while using the CLI. I asked "what's the status of gw north 4" and got a spurious refusal, 
   even though the document answers it ("gw-north-4"). I traced it to the BM25 tokenizer treating a hyphenated ID 
   as one indivisible token, so the space-separated query matched nothing. The fix (commit `2037501`) emits compound IDs
   both whole and as sub-parts, symmetric on index and query — precision preserved, recall gained, pinned by regression case `T23-ID-PUNCT-RECALL`. I believe there are several other issues that arise from the tokenization that affect capitalization
