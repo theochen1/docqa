@@ -9,23 +9,23 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from docqa.types import ClaimRecord
+from docqa.types import ClaimRecord, TextSegment
 
 
 @runtime_checkable
 class Parser(Protocol):
-    """Turns one file into text + within-document locators. Pure: file -> spans.
+    """Turns one file into text segments + within-document locators. Pure: file -> segments.
 
-    Must never raise on a bad file — returns an empty result with a skip reason instead
-    (the no-crash / no-silent-garbage floor).
+    Must never raise on a bad file — returns an empty result (and logs a skip reason) instead
+    (the no-crash / no-silent-garbage floor). The claimizer turns segments into ClaimRecords.
     """
 
     def can_parse(self, path: str) -> bool:
         """Content-aware, not extension-trusting."""
         ...
 
-    def parse(self, path: str) -> list[ClaimRecord]:
-        """Return sourced claims (or []); each carries filename + a format-appropriate locator."""
+    def parse(self, path: str) -> list[TextSegment]:
+        """Return sourced text segments (or []); each carries filename + a locator."""
         ...
 
 

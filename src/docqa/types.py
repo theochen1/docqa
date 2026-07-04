@@ -29,6 +29,20 @@ class SourceStatus(StrEnum):
     OCR = "ocr"         # recovered by OCR from an image-only page
 
 
+class TextSegment(BaseModel):
+    """A parser's output unit: a span of readable text with its source provenance.
+
+    Parsers produce TextSegments (extract text + locator, per format). The claimizer (BT07)
+    consumes them and produces atomic ClaimRecords (split + canonicalize value). This separates
+    format-specific extraction from format-agnostic claim-making.
+    """
+
+    filename: str
+    locator: str = Field(description='"#Heading" | "p.N" | "L12-L18" | structured .eml')
+    text: str
+    source_status: SourceStatus = Field(default=SourceStatus.PARSED)
+
+
 class ClaimRecord(BaseModel):
     """One atomic sourced factual statement — the assumption-sheet cell.
 
