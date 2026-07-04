@@ -98,10 +98,17 @@ def _cmd_eval(args: argparse.Namespace) -> int:
             return DenseRetriever(IndexStore(idx), embedder)
 
         generator = AnthropicGenerator(settings.gen_model, settings.max_tokens)
-        results, _ = run_eval(corpus, cases, build_retriever, generator, k=settings.k,
-                              verbose=args.verbose)
+        results, latency = run_eval(corpus, cases, build_retriever, generator, k=settings.k,
+                                    verbose=args.verbose)
+        # Stamp corpus size onto the latency report (sample scale — INFO only, not the SLO).
+        store = IndexStore(idx)
+        claims = store.load_claims()
+        latency.n_claims = len(claims)
+        latency.n_docs = len({c.filename for c in claims})
+        latency.n_words = sum(len(c.text.split()) for c in claims)
 
     print(format_scoreboard(results))
+    print(f"[docqa] {latency.line()}", file=sys.stderr)
     return 0 if all(r.passed for r in results) else 1
 
 

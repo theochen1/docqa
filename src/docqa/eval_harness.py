@@ -23,6 +23,7 @@ from pathlib import Path
 import yaml
 
 from docqa.core import answer_question
+from docqa.latency import LatencyReport, Timer
 from docqa.types import AnswerResult
 
 # src/docqa/eval_harness.py -> repo root is three parents up.
@@ -89,14 +90,19 @@ def run_eval(
     generator,
     k: int = 8,
     verbose: bool = False,
-) -> tuple[list[CaseResult], AnswerResult]:
+    latency: LatencyReport | None = None,
+) -> tuple[list[CaseResult], LatencyReport]:
     """Run all cases. build_retriever() -> a Retriever over the freshly-built index; generator is
-    the proposer. Both injected so tests can drive with stubs and the CLI with the real stack."""
+    the proposer. Both injected so tests can drive with stubs and the CLI with the real stack.
+    Per-case query latency is recorded into `latency` (a fresh LatencyReport if not supplied)."""
     cases = load_cases(cases_path)
     retriever = build_retriever()
+    report = latency if latency is not None else LatencyReport()
     results: list[CaseResult] = []
     for case in cases:
-        result = answer_question(case["question"], k, retriever, generator)
+        with Timer() as t:
+            result = answer_question(case["question"], k, retriever, generator)
+        report.samples_ms.append(t.elapsed_ms)
         cr = check_case(case, result)
         results.append(cr)
         if verbose:
@@ -104,7 +110,7 @@ def run_eval(
                   file=sys.stderr)
             for r in cr.reasons:
                 print(f"      - {r}", file=sys.stderr)
-    return results, AnswerResult()
+    return results, report
 
 
 def format_scoreboard(results: list[CaseResult]) -> str:

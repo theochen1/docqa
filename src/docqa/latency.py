@@ -1,0 +1,76 @@
+"""Latency instrumentation — the chosen operational constraint, measured not guessed.
+
+Wraps the full query path with a monotonic clock, computes p50/p95 with a pinned percentile method,
+excludes a warm-up query so cold model-load doesn't distort steady state, and prints the number
+with the load-bearing context (corpus size + reference environment). BT14b prints a SAMPLE-corpus
+number labeled "not the SLO"; BT24 adds the blocking full-scale gate.
+"""
+
+from __future__ import annotations
+
+import platform
+import sys
+import time
+from dataclasses import dataclass, field
+
+
+@dataclass
+class LatencyReport:
+    samples_ms: list[float] = field(default_factory=list)
+    n_docs: int = 0
+    n_claims: int = 0
+    n_words: int = 0
+    scale: str = "sample"  # "sample" (INFO only) | "full" (SLO-gated at BT24)
+
+    def _pct(self, p: float) -> float:
+        if not self.samples_ms:
+            return 0.0
+        xs = sorted(self.samples_ms)
+        # nearest-rank, pinned + stated so the number is reproducible run to run
+        k = max(0, min(len(xs) - 1, round((p / 100.0) * (len(xs) - 1))))
+        return xs[k]
+
+    @property
+    def p50(self) -> float:
+        return self._pct(50)
+
+    @property
+    def p95(self) -> float:
+        return self._pct(95)
+
+    def env_stamp(self) -> str:
+        py = f"py{sys.version_info.major}.{sys.version_info.minor}"
+        return f"{py} {platform.system()}/{platform.machine()}"
+
+    def line(self) -> str:
+        label = "" if self.scale == "full" else " (sample — NOT the SLO number)"
+        return (
+            f"latency p50={self.p50:.0f}ms p95={self.p95:.0f}ms{label} | "
+            f"corpus={self.n_docs} docs / {self.n_claims} claims / {self.n_words} words | "
+            f"env={self.env_stamp()} | n={len(self.samples_ms)}"
+        )
+
+
+class Timer:
+    """Monotonic wall-clock around one query. Use as a context manager; read .elapsed_ms after."""
+
+    def __enter__(self):
+        self._t0 = time.perf_counter()
+        return self
+
+    def __exit__(self, *exc):
+        self.elapsed_ms = (time.perf_counter() - self._t0) * 1000.0
+        return False
+
+
+def time_queries(query_fn, questions: list[str], warmup: bool = True) -> LatencyReport:
+    """Time each question through query_fn (question -> Any). Excludes a warm-up run from stats."""
+    report = LatencyReport()
+    qs = list(questions)
+    if warmup and qs:
+        query_fn(qs[0])  # warm the model cache; not recorded
+    for q in qs:
+        with Timer() as t:
+            query_fn(q)
+        report.samples_ms.append(t.elapsed_ms)
+    return report
