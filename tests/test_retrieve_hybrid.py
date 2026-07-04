@@ -6,7 +6,7 @@ from docqa.index_store import IndexStore
 from docqa.ingest import build_index
 from docqa.interfaces import Retriever
 from docqa.retrieval.hybrid import HybridRetriever
-from docqa.retrieval.sparse import BM25
+from docqa.retrieval.sparse import BM25, _tokenize
 
 
 def _corpus(root):
@@ -75,3 +75,45 @@ def test_mutation_dropping_sparse_leg_loses_id_recall(tmp_path):
     claims = IndexStore(idx).load_claims()
     bm = BM25(claims)
     assert "gw-west-2" in claims[bm.rank(q, 1)[0][0]].text
+
+
+# --- ID punctuation-variant recall (the gw-north-4 over-refusal fix) ---
+
+def test_tokenize_expands_compound_id_into_parts():
+    # A compound ID is kept WHOLE (exact-match precision) AND expanded into parts (recall on a
+    # space-separated query). Symmetric: index + query run the same tokenizer.
+    toks = _tokenize("gw-north-4 is pending")
+    assert "gw-north-4" in toks              # whole ID preserved
+    assert {"gw", "north", "4"} <= set(toks)  # ...and its parts, so 'gw north 4' can match
+
+
+def test_tokenize_leaves_plain_words_alone():
+    assert _tokenize("the printer is broken") == ["the", "printer", "is", "broken"]
+
+
+def test_space_separated_id_query_recalls_hyphenated_claim(tmp_path):
+    # The reported bug: "gw north 4" (spaces) must recall the claim about "gw-north-4" (hyphens),
+    # which previously fell out of the candidate set entirely -> spurious refusal.
+    corpus = tmp_path / "c"
+    corpus.mkdir()
+    (corpus / "reg.md").write_text(
+        "# gw-north-4\nProvisioning for gw-north-4 is pending; no region assigned yet.\n"
+        "# noise\nThe cafeteria serves lunch at noon.\n"
+        "# more\nParking is in the basement garage.\n",
+        encoding="utf-8",
+    )
+    idx = str(tmp_path / "i.db")
+    emb = HashingEmbedder(dim=128)
+    build_index(str(corpus), idx, emb)
+    r = HybridRetriever(IndexStore(idx), emb, dense_n=50, sparse_n=50)
+    hits = r.retrieve("whats the status of gw north 4", k=5)
+    assert any("gw-north-4" in h.text for h in hits), [h.text for h in hits]
+
+
+def test_exact_hyphenated_id_still_precise(tmp_path):
+    # Guard against over-expansion: the whole-ID query must still rank its exact claim first (the
+    # parts are additive recall, they don't drown out exact-ID precision).
+    r, idx, emb = _hybrid(tmp_path)
+    claims = IndexStore(idx).load_claims()
+    bm = BM25(claims)
+    assert "gw-west-2" in claims[bm.rank("gw-west-2", 1)[0][0]].text

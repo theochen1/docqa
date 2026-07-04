@@ -11,10 +11,29 @@ from collections import Counter
 from docqa.types import ClaimRecord
 
 _TOKEN = re.compile(r"[a-z0-9]+(?:[-.$%][a-z0-9]+)*")
+# A compound ID/number: has an internal separator (gw-north-4, $4,250.00, nli-deberta-v3).
+_COMPOUND = re.compile(r"[-.$%]")
+# The alphanumeric runs inside a compound token (its sub-parts).
+_PART = re.compile(r"[a-z0-9]+")
 
 
 def _tokenize(text: str) -> list[str]:
-    return _TOKEN.findall(text.lower())
+    """Tokenize to lowercase terms, and additionally emit the sub-parts of any COMPOUND id/number.
+
+    The compound token is kept whole for exact-ID precision (a `gw-north-4` query still matches
+    `gw-north-4` with high IDF). But it's ALSO expanded into its parts (`gw`, `north`, `4`) so a
+    space-separated query — `gw north 4` — recalls the same claim instead of missing it entirely
+    (the punctuation-variant recall gap). Index and query run through this SAME function, so the
+    expansion is symmetric. Non-compound tokens (plain words) are unchanged.
+    """
+    out: list[str] = []
+    for tok in _TOKEN.findall(text.lower()):
+        out.append(tok)
+        if _COMPOUND.search(tok):
+            parts = _PART.findall(tok)
+            # Only add parts that differ from the whole token (avoids duplicating a 1-part match).
+            out.extend(p for p in parts if p != tok)
+    return out
 
 
 class BM25:

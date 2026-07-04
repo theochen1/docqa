@@ -137,3 +137,19 @@ cases:
       never emits 'Reykjavik'. The GATE-SPECIFIC proof (that the entailment gate, not the LLM's own
       restraint, drops a resolvable-but-unentailed claim) is pinned in tests/test_entail.py against
       a stubbed proposer + the entailment-disabled/over-strict mutations.
+
+  - id: T23-ID-PUNCT-RECALL
+    question: "whats the status of gw north 4"
+    expect:
+      refused: false
+      gold: ["pending"]
+      cite_files: ["region_registry.md"]
+    guarantees: [citations, calibration]
+    notes: >
+      Regression for a real over-refusal: the query writes the ID with SPACES ('gw north 4') while
+      the doc has HYPHENS ('gw-north-4'). Before the fix the compound-ID token was indivisible, so
+      BM25 matched nothing and the claim fell out of the candidate set -> spurious
+      INSUFFICIENT_EVIDENCE. The tokenizer now emits compound IDs whole AND as sub-parts (symmetric
+      on index + query), so the space-separated form recalls the claim. Must answer 'pending' + cite
+      region_registry.md, and must NOT leak 'Reykjavik' (the entailment red herring still holds).
+      Guards over-refusal on punctuation-variant identifiers.
