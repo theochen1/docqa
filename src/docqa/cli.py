@@ -27,7 +27,7 @@ def _cmd_ask(args: argparse.Namespace) -> int:
     from docqa.embed import get_embedder
     from docqa.generate import AnthropicGenerator
     from docqa.query_session import open_for_query
-    from docqa.retrieval.dense import DenseRetriever
+    from docqa.retrieval.hybrid import HybridRetriever
 
     settings = Settings.load()
     embedder = get_embedder(settings.embed_model)
@@ -47,7 +47,8 @@ def _cmd_ask(args: argparse.Namespace) -> int:
         )
         return 1
 
-    retriever = DenseRetriever(store, counting)
+    retriever = HybridRetriever(store, counting, rrf_k=settings.rrf_k,
+                                dense_n=settings.dense_n, sparse_n=settings.sparse_n)
     generator = AnthropicGenerator(settings.gen_model, settings.max_tokens)
     result = answer_question(args.question, settings.k, retriever, generator)
 
@@ -72,7 +73,7 @@ def _cmd_eval(args: argparse.Namespace) -> int:
     from docqa.generate import AnthropicGenerator
     from docqa.index_store import IndexStore
     from docqa.ingest import build_index
-    from docqa.retrieval.dense import DenseRetriever
+    from docqa.retrieval.hybrid import HybridRetriever
 
     settings = Settings.load()
     corpus = args.corpus or DEFAULT_CORPUS
@@ -95,7 +96,7 @@ def _cmd_eval(args: argparse.Namespace) -> int:
         build_index(corpus, idx, embedder, decomposer=decomposer)
 
         def build_retriever():
-            return DenseRetriever(IndexStore(idx), embedder)
+            return HybridRetriever(IndexStore(idx), embedder, rrf_k=settings.rrf_k)
 
         generator = AnthropicGenerator(settings.gen_model, settings.max_tokens)
         results, latency = run_eval(corpus, cases, build_retriever, generator, k=settings.k,
@@ -123,7 +124,8 @@ def _cmd_eval(args: argparse.Namespace) -> int:
                 gen = apply_mutant(mutant, base_gen)
                 res, _ = run_eval(
                     corpus, cases,
-                    lambda: DenseRetriever(IndexStore(midx), embedder), gen, k=settings.k,
+                    lambda: HybridRetriever(IndexStore(midx), embedder, rrf_k=settings.rrf_k),
+                    gen, k=settings.k,
                 )
                 return res
 
