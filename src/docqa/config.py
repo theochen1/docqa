@@ -53,7 +53,8 @@ class Settings(BaseModel):
     )
     nli_model: str = Field(
         default="cross-encoder/nli-deberta-v3-small",
-        description="Local entailment/NLI gate. Deterministic, no API call.",
+        description="ASPIRATIONAL (not yet wired): a local NLI model to replace the LLM entailment "
+        "judge — see README cut-list #1. The shipped gate is AnthropicEntailmentJudge.",
     )
 
     # --- retrieval knobs ---
@@ -75,7 +76,8 @@ class Settings(BaseModel):
         default=0.5, description="Min P(entailment) for a claim's cited span to support it."
     )
     conflict_threshold: float = Field(
-        default=0.5, description="Symmetric NLI-contradiction threshold (string/entity values)."
+        default=0.5, description="Reserved for a future NLI-based conflict check. The shipped "
+        "detector is deterministic value-mismatch (conflict.py) and does not read this."
     )
     oos_floor: float = Field(
         default=0.45,

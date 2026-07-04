@@ -35,21 +35,24 @@ The chosen operational constraint is **latency** (target p50 < 5s), measured and
 
 ```bash
 uv sync --extra dev              # install the locked toolchain (Python 3.11)
-uv run pytest -q                 # 191 tests, fully offline (no key, no network)
+uv run pytest -q                 # the full test suite, fully offline (no key, no network)
 uv run ruff check .              # lint gate
 ```
 
-Indexing is **fully local and key-free**. Only the *answer* path (`ask` / `eval`) calls an LLM:
+Indexing is **local and key-free**. Only the *answer* path (`ask` / `eval` / `chat`) calls an LLM:
 
 ```bash
 cp .env.example .env             # then put your ANTHROPIC_API_KEY in it
 uv run docqa index sample_corpus/          # build the index (LLM claimizer; ~$0.02 for the sample)
 uv run docqa ask "How many days per week may employees work remotely?"
+uv run docqa chat                          # interactive REPL: many questions, model+index load once
 uv run docqa eval                          # run the graded eval suite against the real model
 ```
 
 Requires [`uv`](https://docs.astral.sh/uv/). No API key? `docqa index --no-llm` uses a deterministic
-fallback claimizer (degraded quality, documented), and the whole test suite runs offline.
+fallback claimizer (degraded quality, documented). The first index/query downloads the ~130MB
+embedder (BAAI/bge-small-en-v1.5) from HuggingFace, then runs offline; the test suite is offline from
+the start (no key, no download).
 
 ## How it works
 
@@ -68,7 +71,9 @@ question ─► retrieve ─► propose ─► VERIFY ─► assemble | refuse |
 - **Hybrid retrieval.** BM25 (exact IDs / numbers) + dense embeddings (paraphrase), fused with
   Reciprocal Rank Fusion (no score-normalization to tune), then a two-track selection that
   force-includes a disagreeing source so conflicts survive to the comparison step. Exact
-  brute-force search — no ANN — so ranking is deterministic.
+  brute-force search — no ANN — so ranking is deterministic. The BM25 tokenizer emits compound IDs
+  both whole and as sub-parts (symmetric on index + query), so punctuation variants of an
+  identifier still recall (`gw north 4` finds `gw-north-4`).
 - **Propose / verify split.** The proposer sees claim `id + text` only (never filenames/locators,
   so it can't fabricate a plausible citation). Then deterministic code checks: does the cite
   resolve to a real retrieved record? does the span *entail* the claim (an LLM entailment judge,
@@ -121,15 +126,16 @@ Indexing calls the LLM claimizer once per segment. Measured on the sample corpus
 11 files = 25 calls, ~7.8k tokens, ≈ $0.02, ≈ 42s** (first run also downloads the embedder). That
 extrapolates to roughly **$0.30–0.50 per ~200 documents**, one-time per index. Querying embeds only
 the question (the corpus is never re-embedded — verified by a zero-corpus-embed-call assertion on
-the second query). Indexing with `--no-llm` is free and offline.
+the second query). Indexing with `--no-llm` is key-free and cost-free (local embedder only).
 
 ## Eval
 
-`docqa eval` is a mechanical regression gate, not a vibe check. 12 cases exercise all six behaviors
+`docqa eval` is a mechanical regression gate, not a vibe check. 13 cases exercise every behavior
 (citation, both refusal directions, conflict + over-conflict control, injection ×4 including
-injection-in-the-real-source, entailment + red-herring). Each assertion targets the *deterministic*
-layer (gold substring present, refusal token, citation filename, forbidden substring absent), so
-it's robust to wording drift. `docqa eval --mutate` runs a mutation sweep: each seeded bug (drop
+injection-in-the-real-source, entailment + red-herring, and over-refusal on punctuation-variant
+identifiers). Each assertion targets the *deterministic* layer (gold substring present, refusal
+token, citation filename, forbidden substring absent), so it's robust to wording drift. `docqa eval
+--mutate` runs a mutation sweep: each seeded bug (drop
 citations, always-refuse, eager-answer) **must** redden ≥1 case, or that case is flagged a
 false-green. Multi-hop has its own opt-in suite (`eval/cases_multihop.yaml`, needs `DOCQA_MULTIHOP=1`).
 
@@ -170,6 +176,11 @@ All knobs live in one pydantic `Settings` (see `.env.example`), env-overridable 
 prefix, each documented as tuned-not-universal. `docqa doctor` is a fail-fast preflight (key, deps,
 index status).
 
+## Process
+
+How this was built — the AI-assisted workflow, what I accepted and what I overrode, and the
+verifiable artifacts — is written up in [`PROCESS.md`](PROCESS.md).
+
 ## License
 
-Apache-2.0.
+[Apache-2.0](LICENSE).
