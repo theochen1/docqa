@@ -1,73 +1,31 @@
-"""PDF parser: per-page native-text extraction with "p.N" locators (1-indexed).
+"""PDF handling: DELIBERATE SKIP (documented cut).
 
-Classification is PER PAGE (not per file): a page with extractable native text becomes a segment;
-a page that has an image but < MIN_CHARS native text is flagged image-only (needs_ocr) — at BT06
-it is logged + skipped, at BT22 OCR recovers it. A file can thus contribute native pages AND
-image-only pages (the mixed-PDF case).
+PDFs (text-based and scanned) are skipped with a logged warning rather than parsed. This is a
+conscious scope decision, not an oversight: robust PDF text extraction and OCR are their own
+projects, and the tool's focus is answer accuracy + reliability on the formats it does handle
+(Markdown, .eml, plain text). The assessment explicitly accepts "skip them with a logged warning"
+as deliberate handling; the no-crash / no-silent-garbage floor is preserved because a PDF produces
+zero indexed claims and a clear skip reason, never garbage.
+
+If PDF support is wanted later, this is the seam to implement (parse -> TextSegments); nothing else
+in the pipeline assumes PDFs are absent.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from docqa.parsers import MIN_USABLE_CHARS, ParseOutcome
-from docqa.types import TextSegment
-
-# A page needs OCR when it carries an image but yields near-zero native text.
-_MIN_NATIVE_CHARS = 10
+from docqa.parsers import ParseOutcome
 
 
 class PdfParser:
     def can_parse(self, path: str) -> bool:
         return path.lower().endswith(".pdf")
 
-    def parse(self, path: str) -> list[TextSegment]:
+    def parse(self, path: str):
         return self.parse_file(path).segments
 
     def parse_file(self, path: str) -> ParseOutcome:
-        try:
-            import fitz  # PyMuPDF
-        except ImportError:
-            return ParseOutcome(skipped=True, skip_reason="PyMuPDF not installed")
-
-        p = Path(path)
-        try:
-            doc = fitz.open(str(p))
-        except Exception as e:  # noqa: BLE001 - never crash on a corrupt/truncated PDF
-            return ParseOutcome(skipped=True, skip_reason=f"unopenable PDF: {e}")
-
-        segments: list[TextSegment] = []
-        needs_ocr: list[str] = []
-        try:
-            for i, page in enumerate(doc, start=1):
-                locator = f"p.{i}"
-                try:
-                    text = page.get_text("text") or ""
-                    has_image = bool(page.get_images(full=False))
-                except Exception:  # noqa: BLE001 - a bad page shouldn't kill the file
-                    continue
-                if len(text.strip()) >= _MIN_NATIVE_CHARS:
-                    segments.append(
-                        TextSegment(filename=p.name, locator=locator, text=text.strip())
-                    )
-                elif has_image:
-                    # image-only page: no native text but pixels present -> OCR candidate
-                    needs_ocr.append(locator)
-                # else: genuinely blank page -> nothing to index, not an OCR candidate
-        finally:
-            doc.close()
-
-        if not segments and not needs_ocr:
-            return ParseOutcome(skipped=True, skip_reason="no usable text or images in PDF")
-        if not segments and needs_ocr:
-            # Whole doc is image-only: skip-with-warning at BT06 (OCR arrives at BT22).
-            return ParseOutcome(
-                skipped=True,
-                skip_reason=f"image-only PDF (needs OCR): pages {needs_ocr}",
-                needs_ocr=needs_ocr,
-            )
-        # Mixed or fully-native: keep native segments; note any image-only pages for OCR.
-        reason = ""
-        if len(" ".join(s.text for s in segments).strip()) < MIN_USABLE_CHARS:
-            reason = "extracted text below usable threshold"
-        return ParseOutcome(segments=segments, needs_ocr=needs_ocr, skip_reason=reason)
+        # Deliberate skip: recognized, logged, never indexed.
+        return ParseOutcome(
+            skipped=True,
+            skip_reason="PDF skipped (deliberate scope cut — PDFs/OCR not handled in this version)",
+        )

@@ -29,7 +29,6 @@ class FileResult:
     status: str          # "parsed" | "skipped"
     reason: str = ""
     claim_count: int = 0
-    needs_ocr: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -53,8 +52,7 @@ class Manifest:
         for f in self.files:
             tag = f"{f.status}" + (f" ({f.reason})" if f.reason else "")
             extra = f" claims={f.claim_count}" if f.claim_count else ""
-            ocr = f" needs_ocr={f.needs_ocr}" if f.needs_ocr else ""
-            lines.append(f"  {f.filename}: {tag}{extra}{ocr}")
+            lines.append(f"  {f.filename}: {tag}{extra}")
         return "\n".join(lines)
 
 
@@ -100,7 +98,7 @@ def parse_corpus(corpus_dir: str, decomposer=None) -> tuple[list[ClaimRecord], M
         if not outcome.usable:
             manifest.skipped += 1
             manifest.files.append(
-                FileResult(name, "skipped", reason=outcome.skip_reason, needs_ocr=outcome.needs_ocr)
+                FileResult(name, "skipped", reason=outcome.skip_reason)
             )
             continue
 
@@ -118,7 +116,7 @@ def parse_corpus(corpus_dir: str, decomposer=None) -> tuple[list[ClaimRecord], M
         manifest.parsed += 1
         manifest.total_claims += len(claims)
         manifest.files.append(
-            FileResult(name, "parsed", claim_count=len(claims), needs_ocr=outcome.needs_ocr)
+            FileResult(name, "parsed", claim_count=len(claims))
         )
 
     return all_claims, manifest
