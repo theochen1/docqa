@@ -8,6 +8,7 @@ license = { text = "Apache-2.0" }
 authors = [{ name = "Theo Chen" }]
 dependencies = [
     "pydantic>=2.6",
+    "pymupdf>=1.28.0",
 ]
 
 [project.optional-dependencies]
@@ -38,3 +39,8 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+filterwarnings = [
+    # PyMuPDF's SWIG bindings emit noisy DeprecationWarnings on import; not ours to fix.
+    "ignore:builtin type Swig.*:DeprecationWarning",
+    "ignore:builtin type swigvarlink.*:DeprecationWarning",
+]

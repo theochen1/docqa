@@ -15,11 +15,16 @@ from docqa.types import TextSegment
 
 @dataclass
 class ParseOutcome:
-    """Result of parsing one file: segments plus a skip reason if nothing usable came out."""
+    """Result of parsing one file: segments plus a skip reason if nothing usable came out.
+
+    needs_ocr lists locators (e.g. PDF pages) detected as image-only — extraction found no native
+    text. At BT06 these are logged + skipped; BT22 (OCR) plugs into this signal to recover them.
+    """
 
     segments: list[TextSegment] = field(default_factory=list)
     skipped: bool = False
     skip_reason: str = ""
+    needs_ocr: list[str] = field(default_factory=list)
 
     @property
     def usable(self) -> bool:
