@@ -10,18 +10,23 @@ from __future__ import annotations
 
 from docqa.index_store import IndexStore
 from docqa.retrieval.dense import DenseRetriever
+from docqa.retrieval.select import two_track_select
 from docqa.retrieval.sparse import BM25
 from docqa.types import ClaimRecord
 
 
 class HybridRetriever:
     def __init__(self, store: IndexStore, embedder, rrf_k: int = 60,
-                 dense_n: int = 100, sparse_n: int = 100):
+                 dense_n: int = 100, sparse_n: int = 100,
+                 fuse_n: int = 60, per_source_cap: int = 2, select: bool = True):
         self.store = store
         self.embedder = embedder
         self.rrf_k = rrf_k
         self.dense_n = dense_n
         self.sparse_n = sparse_n
+        self.fuse_n = fuse_n
+        self.per_source_cap = per_source_cap
+        self.select = select  # apply two-track selection (off = raw fused order, for A/B tests)
         self._dense = DenseRetriever(store, embedder)
         self._claims: list[ClaimRecord] | None = None
         self._bm25: BM25 | None = None
@@ -55,5 +60,9 @@ class HybridRetriever:
 
         by_id = {c.claim_id: c for c in claims}
         # Stable order: fused score desc, then claim_id asc.
-        ranked = sorted(fused.keys(), key=lambda cid: (-fused[cid], cid))
-        return [by_id[cid] for cid in ranked[:k]]
+        ranked_ids = sorted(fused.keys(), key=lambda cid: (-fused[cid], cid))
+        pool = [by_id[cid] for cid in ranked_ids[: self.fuse_n]]
+        if not self.select:
+            return pool[:k]
+        # Two-track selection guarantees a disagreeing source survives (conflict precondition).
+        return two_track_select(pool, k, per_source_cap=self.per_source_cap)
