@@ -168,22 +168,28 @@ false-green. Multi-hop has its own opt-in suite (`eval/cases_multihop.yaml`, nee
 (~2.4s) but p95 hit ~9s on a small sample — the LLM's own tail latency, which no amount of infra
 tuning removes, only a faster/cheaper model or a smaller token budget. The gate honestly enforces
 p50 (the stated constraint) and prints p95 so the tail is *visible*, not hidden. Second: the
-entailment gate adds an LLM call per proposed claim; it's correct but it's the first thing I'd batch
-or replace with a local NLI model to protect the tail. If I trusted one number least, it's p95 at
-production scale.
+entailment gate adds an LLM call per proposed claim; it's correct, but the first thing I'd do is
+**batch** those N calls into one (cut-list #1) — same semantic judgment, a fraction of the tail. If
+I trusted one number least, it's p95 at production scale.
 
 ## Cut list (priority-ordered)
 
 What I'd build next, highest-leverage first:
 
-1. **Local NLI entailment** (replace the per-claim LLM judge) — biggest latency + cost win, directly
-   attacks the weakest part above.
+1. **Batch the verification pass** — one entailment call over all proposed edges instead of N. This
+   is the biggest latency win and it keeps the operating model intact (the LLM still does the
+   semantic judgment, just once). No quality tradeoff — the first thing I'd ship.
 2. **PDF + OCR ingestion** — the two skipped formats. Parser seam is ready; RapidOCR (pure-pip,
    deterministic when pinned) was scoped then cut for time.
-3. **Batch the verification pass** — one entailment call over all edges instead of N.
-4. **A thin read-only web/API surface** — cut deliberately; the core is surface-agnostic (CLI and
+3. **A thin read-only web/API surface** — cut deliberately; the core is surface-agnostic (CLI and
    eval already prove that), so it's additive.
-5. **Reranking + larger `k`** — off by default (latency); worth an A/B once NLI is local.
+4. **Reranking + larger `k`** — off by default (latency); worth an A/B measured against the harness.
+5. **Optional: a local NLI model for the entailment gate** — a *tradeoff*, not a free win. It would
+   cut per-claim latency and cost, but it partially reverses a deliberate choice: I moved entailment
+   to an LLM judge on purpose (genuine semantic reasoning belongs with the agent, per the operating
+   model). Worth an A/B only if batching (#1) doesn't get the tail under control. Note the *opposite*
+   call for conflict detection — that stays deterministic value-mismatch, never NLI, because small
+   NLI scores "15" vs "20" as neutral.
 
 ## Next 4 hours
 

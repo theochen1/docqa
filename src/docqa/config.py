@@ -76,8 +76,9 @@ class Settings(BaseModel):
         default=0.5, description="Min P(entailment) for a claim's cited span to support it."
     )
     conflict_threshold: float = Field(
-        default=0.5, description="Reserved for a future NLI-based conflict check. The shipped "
-        "detector is deterministic value-mismatch (conflict.py) and does not read this."
+        default=0.5, description="Unused. Conflict detection is deterministic value-mismatch by "
+        "design (conflict.py) — NOT NLI, which scores '15' vs '20' as neutral. Kept only for "
+        "back-compat of the env var; the detector never reads it."
     )
     oos_floor: float = Field(
         default=0.45,
