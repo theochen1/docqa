@@ -54,6 +54,29 @@ fallback claimizer (degraded quality, documented). The first index/query downloa
 embedder (BAAI/bge-small-en-v1.5) from HuggingFace, then runs offline; the test suite is offline from
 the start (no key, no download).
 
+## Pointing it at your own folder
+
+The model is **index once, then query many times** — you point at a directory at index time, and
+`ask` / `chat` reuse the persisted `index.db` (the query path never re-embeds the corpus, which is
+what keeps answers fast — the R-PERSIST design):
+
+```bash
+uv run docqa index ~/Documents/notes      # point at ANY folder -> writes ./index.db
+uv run docqa ask "what did I decide about X?"
+uv run docqa chat                          # or start a session over the same index
+```
+
+Re-running `index` on a new folder overwrites `index.db`. To keep several corpora side by side, give
+each its own index file via `DOCQA_INDEX_PATH`:
+
+```bash
+DOCQA_INDEX_PATH=work.db uv run docqa index ~/work-docs
+DOCQA_INDEX_PATH=work.db uv run docqa chat        # chats over work.db, leaving the default untouched
+```
+
+Only `.md`, `.txt`, and `.eml` are indexed; anything else is logged as a skip and reconciled in the
+manifest (see [Formats](#formats)). `docqa doctor` reports whether an index is present.
+
 ## How it works
 
 ```
