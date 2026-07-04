@@ -53,6 +53,38 @@ def build_prompt(question: str, claims: list[ClaimRecord]) -> dict:
     return {"system": _SYSTEM_RULES, "user": user, "mark": mark, "id_map": id_map}
 
 
+def _extract_json_object(text: str) -> dict:
+    """Parse the model's JSON object, tolerating ```json fences and trailing prose.
+
+    A bare json.loads fails on a fenced ```json block, and swallowing that into a refusal turns a
+    correct answer into INSUFFICIENT_EVIDENCE (a real bug the first live eval caught). We strip
+    fences and, failing that, salvage the outermost {...}. Only a genuine parse failure yields the
+    empty (refusal) shape — never a formatting quirk.
+    """
+    s = text.strip()
+    # Strip a leading ```json / ``` fence and trailing ```.
+    if s.startswith("```"):
+        s = s.split("\n", 1)[-1] if "\n" in s else s
+        if s.endswith("```"):
+            s = s[: -3]
+        s = s.strip()
+        if s.lower().startswith("json"):
+            s = s[4:].strip()
+    try:
+        obj = json.loads(s)
+    except json.JSONDecodeError:
+        start, end = s.find("{"), s.rfind("}")
+        if start == -1 or end == -1 or end < start:
+            return {"claims": [], "refusal_token": "INSUFFICIENT_EVIDENCE"}
+        try:
+            obj = json.loads(s[start : end + 1])
+        except json.JSONDecodeError:
+            return {"claims": [], "refusal_token": "INSUFFICIENT_EVIDENCE"}
+    if not isinstance(obj, dict):
+        return {"claims": [], "refusal_token": "INSUFFICIENT_EVIDENCE"}
+    return obj
+
+
 def normalize_proposal(raw: dict, id_map: dict) -> dict:
     """Map the model's local cite ids (c0..) back to real claim_ids; keep only known ids."""
     out_claims = []
@@ -98,9 +130,6 @@ class AnthropicGenerator:
             system=prompt["system"],
             messages=[{"role": "user", "content": prompt["user"]}],
         )
-        text = "".join(getattr(b, "text", "") for b in msg.content).strip()
-        try:
-            raw = json.loads(text)
-        except json.JSONDecodeError:
-            raw = {"claims": [], "refusal_token": "INSUFFICIENT_EVIDENCE"}
+        text = "".join(getattr(b, "text", "") for b in msg.content)
+        raw = _extract_json_object(text)
         return normalize_proposal(raw, prompt["id_map"])

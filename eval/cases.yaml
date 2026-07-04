@@ -1,0 +1,40 @@
+# docqa eval cases — the contract. Each case has an expected behavior and a MECHANICAL pass/fail.
+# Fields:
+#   id                    stable case id
+#   question              the NL query
+#   expect.refused        true if the tool MUST refuse (answer absent), false if it MUST answer
+#   expect.gold           substrings that MUST all appear in answer_text (answerable cases)
+#   expect.forbidden      substrings that MUST NOT appear (fabrication / leak guards)
+#   expect.cite_files     filenames at least one citation must resolve to (optional)
+#   guarantees            which hard guarantees this case exercises (for the per-guarantee matrix)
+#   notes                 rationale (printed only under --verbose)
+#
+# BT14 ships the answerable + refusal cases; conflict/injection/multi-hop/OCR cases arrive with
+# their guarantee tasks (M5/M6), each with its own fixtures + mutation.
+
+cases:
+  - id: T00-BASE
+    question: "How many days of PTO do full-time employees get?"
+    expect:
+      refused: false
+      gold: ["15 days"]
+      cite_files: ["handbook.md"]
+    guarantees: [citations]
+    notes: "The base answerable case — single source, must answer + cite handbook.md #PTO Policy."
+
+  - id: T-CARD1
+    question: "What are the office hours?"
+    expect:
+      refused: false
+      gold: ["9am", "5pm"]
+      cite_files: ["faq.md"]
+    guarantees: [calibration]
+    notes: "One-source answerable; guards against over-refusal (must NOT refuse an easy question)."
+
+  - id: T03-ABSENT
+    question: "What is Aldermere's FY27 marketing budget?"
+    expect:
+      refused: true
+      forbidden: ["$", "budget is", "FY27 marketing budget is"]
+    guarantees: [refusal]
+    notes: "On-topic domain but the specific fact is absent from every doc — must refuse, no number."

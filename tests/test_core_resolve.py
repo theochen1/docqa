@@ -31,14 +31,15 @@ def test_resolving_claim_is_emitted_with_citation():
     assert res.claims[0].entailed is True  # pre-gate default (BT18 narrows)
 
 
-def test_answer_text_is_assembled_from_verified_claims_only():
-    # Proposer text that does NOT resolve to any source must not appear in answer_text.
+def test_answer_text_is_assembled_from_source_spans_only():
+    # Proposer's free text never reaches answer_text — only the cited record's span does.
     proposal = {"claims": [{"text": "The CEO is Dana Reed.", "cite_ids": ["c_pto"]}],
                 "refusal_token": None}
     res = answer_from_proposal(proposal, _retrieved())
-    # "Dana Reed" doesn't round-trip to the PTO span -> claim dropped -> refuse (no uncited prose).
-    assert res.markers.refused
-    assert "Dana Reed" not in res.answer_text
+    # c_pto resolves (referential integrity), so we emit the PTO span, NOT the proposer's prose.
+    assert not res.markers.refused
+    assert res.answer_text == "Full-time employees accrue 15 days of PTO."
+    assert "Dana Reed" not in res.answer_text  # fabricated prose never emitted
 
 
 def test_explicit_refusal_token_refuses():
@@ -47,12 +48,22 @@ def test_explicit_refusal_token_refuses():
     assert res.markers.refused and res.markers.refusal_token == "INSUFFICIENT_EVIDENCE"
 
 
-def test_wrong_cite_id_does_not_resolve():
+def test_unresolvable_cite_id_refuses():
+    # A cite to an id that was NOT retrieved fails referential integrity -> dropped -> refuse.
+    proposal = {"claims": [{"text": "Anything.", "cite_ids": ["c_ghost"]}], "refusal_token": None}
+    res = answer_from_proposal(proposal, _retrieved())
+    assert res.markers.refused
+
+
+def test_wrong_but_real_cite_resolves_pending_entailment_gate():
+    # Citing a REAL retrieved record (c_vpn) for a PTO claim passes referential integrity at BT13
+    # and emits the VPN span. Detecting that the span doesn't SUPPORT the question is the BT18
+    # entailment gate's job — documented here so the deferral is explicit, not a silent gap.
     proposal = {"claims": [{"text": "Full-time employees accrue 15 days of PTO.",
                             "cite_ids": ["c_vpn"]}], "refusal_token": None}
     res = answer_from_proposal(proposal, _retrieved())
-    # cited the VPN claim for a PTO statement -> span mismatch -> refuse
-    assert res.markers.refused
+    assert not res.markers.refused
+    assert res.answer_text == "The VPN gateway is gw-west-2."  # emits the (mis-cited) real span
 
 
 def test_empty_query_refuses():

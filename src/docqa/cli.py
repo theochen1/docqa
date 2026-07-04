@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from docqa import __version__
 
@@ -60,6 +61,48 @@ def _cmd_ask(args: argparse.Namespace) -> int:
     for c in result.claims:
         print(f"  - {c.citation.filename} {c.citation.locator}", file=sys.stderr)
     return 0
+
+
+def _cmd_eval(args: argparse.Namespace) -> int:
+    import tempfile
+
+    from docqa.config import Settings
+    from docqa.embed import get_embedder
+    from docqa.eval_harness import DEFAULT_CASES, DEFAULT_CORPUS, format_scoreboard, run_eval
+    from docqa.generate import AnthropicGenerator
+    from docqa.index_store import IndexStore
+    from docqa.ingest import build_index
+    from docqa.retrieval.dense import DenseRetriever
+
+    settings = Settings.load()
+    corpus = args.corpus or DEFAULT_CORPUS
+    cases = args.suite or DEFAULT_CASES
+    embedder = get_embedder(settings.embed_model)
+
+    # Build a throwaway index over the sample corpus (deterministic; not the user's index.db).
+    with tempfile.TemporaryDirectory() as tmp:
+        idx = str(Path(tmp) / "eval_index.db")
+        # LLM claimizer if a key is present; deterministic fallback otherwise (harness still runs).
+        import os
+
+        from docqa.config import API_KEY_VAR
+
+        decomposer = None
+        if os.environ.get(API_KEY_VAR, "").strip():
+            from docqa.claimizer_llm import AnthropicClaimizer
+
+            decomposer = AnthropicClaimizer(settings.gen_model)
+        build_index(corpus, idx, embedder, decomposer=decomposer)
+
+        def build_retriever():
+            return DenseRetriever(IndexStore(idx), embedder)
+
+        generator = AnthropicGenerator(settings.gen_model, settings.max_tokens)
+        results, _ = run_eval(corpus, cases, build_retriever, generator, k=settings.k,
+                              verbose=args.verbose)
+
+    print(format_scoreboard(results))
+    return 0 if all(r.passed for r in results) else 1
 
 
 def _cmd_index(args: argparse.Namespace) -> int:
@@ -130,6 +173,12 @@ def build_parser() -> argparse.ArgumentParser:
     ask = sub.add_parser("ask", help="Ask a question against the persisted index.")
     ask.add_argument("question", help="The natural-language question.")
     ask.set_defaults(func=_cmd_ask)
+
+    ev = sub.add_parser("eval", help="Run the eval harness against the sample corpus.")
+    ev.add_argument("--corpus", help="Corpus dir (default: bundled sample_corpus).")
+    ev.add_argument("--suite", help="Cases YAML (default: eval/cases.yaml).")
+    ev.add_argument("--verbose", action="store_true", help="Print per-case detail to stderr.")
+    ev.set_defaults(func=_cmd_eval)
 
     return parser
 

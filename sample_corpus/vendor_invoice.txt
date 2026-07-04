@@ -1,0 +1,8 @@
+ALDERMERE SYSTEMS - VENDOR INVOICE
+
+Vendor: Northwind Office Supplies
+Invoice number: NW-20841
+
+Total amount due is $4,250.00. Payment terms are Net 30.
+
+Remit payment to the address on file. Questions to accounts-payable@aldermere.example.

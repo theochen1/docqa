@@ -46,19 +46,26 @@ def span_resolves(claim_text: str, record: ClaimRecord) -> bool:
     return len(a) >= _MIN_OVERLAP_CHARS or a == b
 
 
-def verify_claim(proposed_text: str, record: ClaimRecord) -> Claim | None:
-    """Return a verified Claim if the citation resolves, else None.
+def verify_claim(proposed_text: str, record: ClaimRecord | None) -> Claim | None:
+    """Return a verified Claim, or None if the citation doesn't resolve to a real record.
 
-    The emitted claim text is the SOURCE span (record.text), not the proposer's text — so
-    answer_text can never contain a character absent from the cited source (no fabricated prose,
-    even when the proposal is a faithful sub-span). entailed=True is the pre-gate default; BT18
-    narrows it.
+    BT13 guarantee = REFERENTIAL INTEGRITY: the cite must resolve to a real retrieved record.
+    Acceptance is that resolution (record is not None) — NOT a substring match against the
+    proposer's paraphrase (that was over-strict and refused every rephrased answer).
+
+    The emitted claim text is the SOURCE span (record.text), never the proposer's free text, so
+    answer_text can never contain a character absent from a cited source — the no-fabrication
+    guarantee holds by construction, independent of how the proposer phrased its draft.
+
+    Support-verification (does the span actually ENTAIL the claim?) is the BT18 entailment gate.
+    entailed=True here is the pre-gate default that BT18 narrows to false when a span fails NLI.
+    `proposed_text` is retained in the signature for that future gate.
     """
-    if not span_resolves(proposed_text, record):
+    if record is None:
         return None
     return Claim(
         text=record.text,        # anchor to the source, never the proposer's free text
         citation=resolve(record),
-        entailed=True,           # pre-gate default; BT18 narrows this
+        entailed=True,           # pre-gate default; BT18 narrows this via entailment
         entail_score=1.0,
     )

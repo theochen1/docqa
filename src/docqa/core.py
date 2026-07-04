@@ -37,15 +37,19 @@ def answer_from_proposal(
         )
 
     verified: list[Claim] = []
+    seen_records: set[str] = set()
     for item in proposal["claims"]:
         text = item["text"]
         for cid in item.get("cite_ids", []):
             rec = by_id.get(cid)
             if rec is None:
-                continue
+                continue  # cite didn't resolve to a retrieved record (referential integrity)
+            if rec.claim_id in seen_records:
+                break  # this source already emitted; don't repeat the span
             vc = verify_claim(text, rec)
             if vc is not None:
                 verified.append(vc)
+                seen_records.add(rec.claim_id)
                 break  # one resolving citation is enough for this claim
 
     if not verified:

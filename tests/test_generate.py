@@ -3,6 +3,7 @@ build_prompt / normalize_proposal functions and a stub generator (no API call)."
 
 from docqa.generate import (
     StubGenerator,
+    _extract_json_object,
     build_prompt,
     normalize_proposal,
 )
@@ -61,6 +62,29 @@ def test_stub_generator_end_to_end():
     out = StubGenerator(responder).propose("how much PTO?", claims)
     assert out["claims"][0]["cite_ids"] == ["realid_pto"]
     assert out["refusal_token"] is None
+
+
+def test_extract_json_strips_markdown_fence():
+    # The exact bug the first live eval caught: a correct answer wrapped in ```json.
+    fenced = '```json\n{"claims": [{"text": "x", "cite_ids": ["c0"]}], "refusal_token": null}\n```'
+    obj = _extract_json_object(fenced)
+    assert obj["claims"][0]["text"] == "x"
+    assert obj["refusal_token"] is None
+
+
+def test_extract_json_plain():
+    obj = _extract_json_object('{"claims": [], "refusal_token": "INSUFFICIENT_EVIDENCE"}')
+    assert obj["refusal_token"] == "INSUFFICIENT_EVIDENCE"
+
+
+def test_extract_json_salvages_trailing_prose():
+    obj = _extract_json_object('Here you go: {"claims": [], "refusal_token": null} done')
+    assert obj["claims"] == []
+
+
+def test_extract_json_garbage_is_refusal_not_crash():
+    obj = _extract_json_object("I cannot help with that.")
+    assert obj["refusal_token"] == "INSUFFICIENT_EVIDENCE"
 
 
 def test_mark_is_fresh_per_call_not_derivable():

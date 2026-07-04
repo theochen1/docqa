@@ -1,13 +1,13 @@
-"""Follow-up to the M3 review (HIGH): the citation guarantee must not admit fabricated prose.
+"""The citation guarantee (M3 review HIGH): fabricated prose must never reach answer_text.
 
-The bug: span_resolves accepted `b in a`, so a proposer could append uncited/fabricated content
-after one real span and have the whole sentence round-trip as 'cited'. answer_text is emitted from
-the proposer's text, so the fabrication reached the user. These tests reproduce it, then pin the
-fix: a proposed claim resolves ONLY when it is itself supported within the source span (a in b),
-with a minimum-overlap guard against trivial short-fragment matches.
+The guarantee is now enforced BY CONSTRUCTION: verify_claim emits the retrieved record's own
+text (record.text), never the proposer's free text. So even when the proposer pads its draft with
+fabricated content, only the grounded source span is emitted. And a cite that doesn't resolve to a
+retrieved record is dropped (referential integrity). Support-checking — does the span actually
+entail the claim — is the BT18 entailment gate, tested there.
 """
 
-from docqa.citations import span_resolves, verify_claim
+from docqa.citations import verify_claim
 from docqa.core import answer_from_proposal
 from docqa.types import ClaimRecord
 
@@ -16,21 +16,9 @@ def _rec(text, cid="c1"):
     return ClaimRecord(claim_id=cid, filename="f.md", locator="#h", text=text)
 
 
-# --- the reproduced leak: fabricated content appended to a real span must NOT resolve ---
+# --- the core guarantee: answer_text contains only grounded source spans, never proposer prose ---
 
-def test_fabricated_suffix_does_not_resolve():
-    rec = _rec("Employees accrue 15 days of PTO")
-    fabricated = "Employees accrue 15 days of PTO and the CEO is Dana Reed who earns 2M"
-    assert span_resolves(fabricated, rec) is False
-
-
-def test_source_engulfed_by_proposal_does_not_resolve():
-    rec = _rec("The rate is 5%.")
-    proposal = "The rate is 5%. Additionally the fee is 500 dollars."
-    assert span_resolves(proposal, rec) is False
-
-
-def test_fabricated_answer_is_refused_not_emitted():
+def test_fabricated_padding_never_reaches_answer_text():
     rec = _rec("Employees accrue 15 days of PTO", cid="c_pto")
     proposal = {
         "claims": [{"text": "Employees accrue 15 days of PTO and the CEO earns 2M",
@@ -38,29 +26,52 @@ def test_fabricated_answer_is_refused_not_emitted():
         "refusal_token": None,
     }
     res = answer_from_proposal(proposal, [rec])
+    # Claim resolves (real record) so we answer — with the SOURCE span, not the padded draft.
+    assert not res.markers.refused
+    assert res.answer_text == "Employees accrue 15 days of PTO"
+    assert "2M" not in res.answer_text and "CEO" not in res.answer_text
+
+
+def test_answer_text_is_exactly_source_spans():
+    r1 = _rec("The rate is 5%.", cid="c_rate")
+    proposal = {"claims": [{"text": "The rate is 5%. Additionally the fee is 500 dollars.",
+                            "cite_ids": ["c_rate"]}], "refusal_token": None}
+    res = answer_from_proposal(proposal, [r1])
+    assert res.answer_text == "The rate is 5%."
+    assert "500" not in res.answer_text
+
+
+def test_unresolvable_citation_is_dropped():
+    rec = _rec("A real fact.", cid="c_real")
+    # Proposer cites an id that was never retrieved -> referential integrity fails -> refuse.
+    proposal = {"claims": [{"text": "A fabricated fact.", "cite_ids": ["c_ghost"]}],
+                "refusal_token": None}
+    res = answer_from_proposal(proposal, [rec])
     assert res.markers.refused
-    assert "2M" not in res.answer_text
-    assert "CEO" not in res.answer_text
+    assert "fabricated" not in res.answer_text
 
 
-# --- what SHOULD still resolve: a faithful sub-span of the source ---
-
-def test_faithful_subspan_resolves():
-    rec = _rec("Full-time employees accrue 15 days of paid time off per year.")
-    assert span_resolves("employees accrue 15 days of paid time off", rec) is True
-    vc = verify_claim("employees accrue 15 days of paid time off", rec)
-    assert vc is not None and vc.entailed is True
-
-
-def test_exact_match_resolves():
-    rec = _rec("The VPN gateway is gw-west-2.")
-    assert span_resolves("The VPN gateway is gw-west-2.", rec) is True
+def test_resolving_claim_emits_grounded_span():
+    rec = _rec("Full-time employees accrue 15 days of paid time off per year.", cid="c_pto")
+    # The proposer paraphrases — this MUST still resolve (referential integrity), and emit the span.
+    proposal = {"claims": [{"text": "employees get 15 days off", "cite_ids": ["c_pto"]}],
+                "refusal_token": None}
+    res = answer_from_proposal(proposal, [rec])
+    assert not res.markers.refused
+    assert res.answer_text == rec.text
+    assert res.claims[0].citation.filename == "f.md"
 
 
-# --- the short-fragment guard (finding #7): a tiny fragment must not trivially match ---
+def test_verify_claim_none_record_returns_none():
+    assert verify_claim("anything", None) is None
 
-def test_trivial_short_fragment_does_not_resolve():
-    rec = _rec("The comprehensive quarterly budget report covers all departments and regions.")
-    # "the" is a substring but carries no real support -> must not resolve.
-    assert span_resolves("the", rec) is False
-    assert span_resolves("all", rec) is False
+
+def test_duplicate_source_not_emitted_twice():
+    rec = _rec("The only fact.", cid="c_dup")
+    proposal = {"claims": [
+        {"text": "the only fact", "cite_ids": ["c_dup"]},
+        {"text": "restating the only fact", "cite_ids": ["c_dup"]},
+    ], "refusal_token": None}
+    res = answer_from_proposal(proposal, [rec])
+    assert res.answer_text == "The only fact."  # emitted once, not doubled
+    assert len(res.claims) == 1
