@@ -111,7 +111,21 @@ def _verified_props(verified: list[Claim], retrieved: list[ClaimRecord]) -> set[
     return props
 
 
-def answer_question(question: str, k: int, retriever, generator, entail_judge=None) -> AnswerResult:
+def _apply_oos(result: AnswerResult, retriever, question: str, oos_floor: float | None) -> None:
+    """Refusal calibration: upgrade an INSUFFICIENT_EVIDENCE refusal to OUT_OF_SCOPE when the top
+    raw dense cosine is below the off-domain floor (the query's topic isn't in the corpus at all).
+    Uses raw cosine (absolute scale), never the RRF fused score. In-place on `result`."""
+    if oos_floor is None or not result.markers.refused:
+        return
+    top = getattr(retriever, "top_similarity", None)
+    if top is None:
+        return
+    if top(question) < oos_floor:
+        result.markers.refusal_token = "OUT_OF_SCOPE"
+
+
+def answer_question(question: str, k: int, retriever, generator, entail_judge=None,
+                    oos_floor: float | None = None) -> AnswerResult:
     """Full path. retriever + generator (+ optional entailment judge) are injected seams."""
     if not question or not question.strip():
         # Degenerate empty query — handled properly (reserved exit code) by the CLI at BT20b.
@@ -119,11 +133,14 @@ def answer_question(question: str, k: int, retriever, generator, entail_judge=No
 
     retrieved = retriever.retrieve(question, k)
     if not retrieved:
-        return AnswerResult(markers=Markers(refused=True, refusal_token="INSUFFICIENT_EVIDENCE"))
+        res = AnswerResult(markers=Markers(refused=True, refusal_token="INSUFFICIENT_EVIDENCE"))
+        _apply_oos(res, retriever, question, oos_floor)
+        return res
 
     # The proposer sees id+text only; build_prompt's id_map is applied inside the generator.
     proposal = generator.propose(question, retrieved)
     result = answer_from_proposal(proposal, retrieved, entail_judge=entail_judge)
+    _apply_oos(result, retriever, question, oos_floor)
     # Stamp determinism/audit meta.
     result.meta = {
         "gen_model": getattr(generator, "model_id", "unknown"),

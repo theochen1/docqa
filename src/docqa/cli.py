@@ -48,16 +48,33 @@ def _cmd_ask(args: argparse.Namespace) -> int:
         return 1
 
     from docqa.entail import AnthropicEntailmentJudge
+    from docqa.types import EXIT_EMPTY_CORPUS, EXIT_EMPTY_QUERY
+
+    # Degenerate empty/whitespace query -> reserved exit code (BT20b), not a spoofable message.
+    if not args.question or not args.question.strip():
+        print("[docqa] empty query", file=sys.stderr)
+        return EXIT_EMPTY_QUERY
+
+    # Empty index (empty corpus or all files skipped) -> reserved exit code.
+    if store.count() == 0:
+        print("[docqa] empty corpus: index has zero claims", file=sys.stderr)
+        return EXIT_EMPTY_CORPUS
 
     retriever = HybridRetriever(store, counting, rrf_k=settings.rrf_k,
                                 dense_n=settings.dense_n, sparse_n=settings.sparse_n)
     generator = AnthropicGenerator(settings.gen_model, settings.max_tokens)
     judge = AnthropicEntailmentJudge(settings.gen_model)
-    result = answer_question(args.question, settings.k, retriever, generator, entail_judge=judge)
+    result = answer_question(args.question, settings.k, retriever, generator, entail_judge=judge,
+                             oos_floor=settings.oos_floor)
 
     # Query path must never re-embed the corpus (R-PERSIST): only the query is embedded.
     print(f"[docqa] corpus_embed_calls={report.corpus_embed_calls}", file=sys.stderr)
 
+    if result.markers.conflict:
+        print(result.answer_text)
+        for c in result.claims:
+            print(f"  - {c.citation.filename} {c.citation.locator}", file=sys.stderr)
+        return 0
     if result.markers.refused:
         print(result.markers.refusal_token or "INSUFFICIENT_EVIDENCE")
         return 0
@@ -107,7 +124,8 @@ def _cmd_eval(args: argparse.Namespace) -> int:
             from docqa.entail import AnthropicEntailmentJudge
             judge = AnthropicEntailmentJudge(settings.gen_model)
         results, latency = run_eval(corpus, cases, build_retriever, generator, k=settings.k,
-                                    verbose=args.verbose, entail_judge=judge)
+                                    verbose=args.verbose, entail_judge=judge,
+                                    oos_floor=settings.oos_floor)
         # Stamp corpus size onto the latency report (sample scale — INFO only, not the SLO).
         store = IndexStore(idx)
         claims = store.load_claims()

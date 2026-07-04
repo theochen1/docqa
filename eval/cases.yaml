@@ -61,6 +61,18 @@ cases:
       Over-conflict guard: handbook and handbook_summary both mention remote work without a
       contradicting value -> must NOT fire the conflict marker.
 
+  - id: T04-OOS
+    question: "What is the capital of France?"
+    expect:
+      refused: true
+      refusal_token: "OUT_OF_SCOPE"
+      forbidden: ["Paris"]
+    guarantees: [refusal]
+    notes: >
+      Off-domain: nothing in an HR/ops corpus addresses France. Must refuse with OUT_OF_SCOPE (not
+      INSUFFICIENT_EVIDENCE) and must NOT answer 'Paris' from parametric knowledge. The token is
+      chosen by the raw dense-cosine floor (absolute scale), not the RRF fused rank.
+
   - id: T22-POS-ENTAIL
     question: "Which datacenter is the gw-south-1 gateway deployed in?"
     expect:

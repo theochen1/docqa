@@ -78,8 +78,9 @@ class Settings(BaseModel):
         default=0.5, description="Symmetric NLI-contradiction threshold (string/entity values)."
     )
     oos_floor: float = Field(
-        default=0.30,
-        description="Raw dense-cosine floor separating OUT_OF_SCOPE from INSUFFICIENT_EVIDENCE.",
+        default=0.45,
+        description="Raw dense-cosine floor separating OUT_OF_SCOPE from INSUFFICIENT_EVIDENCE. "
+        "Tuned on the sample corpus (off-domain ~0.38 vs on-domain ~0.59+); tuned-not-universal.",
     )
 
     # --- multi-hop (SHOULD, off by default) ---

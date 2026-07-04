@@ -38,6 +38,12 @@ class DenseRetriever:
     def retrieve(self, query: str, k: int) -> list[ClaimRecord]:
         return [sc.claim for sc in self.retrieve_scored(query, k)]
 
+    def top_similarity(self, query: str) -> float:
+        """Max raw dense cosine of the query to any claim — an absolute-scale off-domain signal.
+        (Fused RRF scores have no absolute scale, so the OOS floor uses this, not fused rank.)"""
+        top = self.retrieve_scored(query, 1)
+        return top[0].score if top else 0.0
+
     def retrieve_scored(self, query: str, k: int) -> list[ScoredClaim]:
         self._ensure_loaded()
         claims = self._claims or []

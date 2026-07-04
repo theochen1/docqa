@@ -36,6 +36,10 @@ class HybridRetriever:
             self._claims = self.store.load_claims()
             self._bm25 = BM25(self._claims)
 
+    def top_similarity(self, query: str) -> float:
+        """Delegate to the dense leg's raw cosine — the absolute-scale off-domain signal."""
+        return self._dense.top_similarity(query)
+
     def retrieve(self, query: str, k: int) -> list[ClaimRecord]:
         self._ensure()
         claims = self._claims or []

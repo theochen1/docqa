@@ -64,6 +64,12 @@ def check_case(case: dict, result: AnswerResult) -> CaseResult:
         if not expect["refused"] and result.markers.refused:
             reasons.append("expected an answer but tool refused (over-refusal)")
 
+    if "refusal_token" in expect and result.markers.refusal_token != expect["refusal_token"]:
+        reasons.append(
+            f"expected refusal_token {expect['refusal_token']!r}, "
+            f"got {result.markers.refusal_token!r}"
+        )
+
     if "conflict" in expect:
         if expect["conflict"] and not result.markers.conflict:
             reasons.append("expected a CONFLICT marker but none was surfaced")
@@ -107,6 +113,7 @@ def run_eval(
     verbose: bool = False,
     latency: LatencyReport | None = None,
     entail_judge=None,
+    oos_floor: float | None = None,
 ) -> tuple[list[CaseResult], LatencyReport]:
     """Run all cases. build_retriever() -> a Retriever over the freshly-built index; generator is
     the proposer; entail_judge (optional) is the R-ENTAIL gate. All injected so tests can drive
@@ -118,7 +125,7 @@ def run_eval(
     for case in cases:
         with Timer() as t:
             result = answer_question(case["question"], k, retriever, generator,
-                                     entail_judge=entail_judge)
+                                     entail_judge=entail_judge, oos_floor=oos_floor)
         report.samples_ms.append(t.elapsed_ms)
         cr = check_case(case, result)
         results.append(cr)
