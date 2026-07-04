@@ -64,6 +64,12 @@ def check_case(case: dict, result: AnswerResult) -> CaseResult:
         if not expect["refused"] and result.markers.refused:
             reasons.append("expected an answer but tool refused (over-refusal)")
 
+    if "conflict" in expect:
+        if expect["conflict"] and not result.markers.conflict:
+            reasons.append("expected a CONFLICT marker but none was surfaced")
+        if not expect["conflict"] and result.markers.conflict:
+            reasons.append("unexpected CONFLICT marker (over-conflict on agreeing sources)")
+
     # forbidden substrings must never appear, regardless of refuse/answer.
     for bad in expect.get("forbidden", []):
         if _norm(bad) and _norm(bad) in answer_norm:

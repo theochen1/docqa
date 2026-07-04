@@ -14,13 +14,13 @@
 
 cases:
   - id: T00-BASE
-    question: "How many days of PTO do full-time employees get?"
+    question: "How many days per week may employees work remotely?"
     expect:
       refused: false
-      gold: ["15 days"]
+      gold: ["3 days"]
       cite_files: ["handbook.md"]
     guarantees: [citations]
-    notes: "The base answerable case — single source, must answer + cite handbook.md #PTO Policy."
+    notes: "Base answerable case — single uncontested source, must answer + cite handbook.md."
 
   - id: T-CARD1
     question: "What are the office hours?"
@@ -38,6 +38,28 @@ cases:
       forbidden: ["$", "budget is", "FY27 marketing budget is"]
     guarantees: [refusal]
     notes: "On-topic domain but the specific fact is absent from every doc — must refuse, no number."
+
+  - id: T06-CONFLICT
+    question: "How many days of PTO do full-time employees get?"
+    expect:
+      conflict: true
+      gold: ["15", "20"]
+      cite_files: ["handbook.md", "hr_memo_2025.md"]
+    guarantees: [conflict]
+    notes: >
+      handbook (15 days) vs hr_memo_2025 (20 days) contradict on the same proposition. Must surface
+      BOTH values + a conflict marker, never silently pick one. handbook_summary (also 15) agrees,
+      so it must NOT be treated as a third conflicting side.
+
+  - id: T05-AGREE
+    question: "How many days per week can staff work remotely?"
+    expect:
+      conflict: false
+      refused: false
+    guarantees: [conflict]
+    notes: >
+      Over-conflict guard: handbook and handbook_summary both mention remote work without a
+      contradicting value -> must NOT fire the conflict marker.
 
   - id: T22-POS-ENTAIL
     question: "Which datacenter is the gw-south-1 gateway deployed in?"

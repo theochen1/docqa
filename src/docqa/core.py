@@ -10,8 +10,13 @@ no uncited sentence can appear. Conflict/entailment/calibration layer on in M5.
 from __future__ import annotations
 
 from docqa.citations import verify_claim
+from docqa.conflict import detect_conflicts
 from docqa.generate import build_prompt
-from docqa.types import AnswerResult, Claim, ClaimRecord, Markers
+from docqa.types import AnswerResult, Citation, Claim, ClaimRecord, Markers
+
+
+def _proposition_key(c: ClaimRecord) -> str:
+    return f"{c.subject_norm}|{c.predicate_norm}".strip("|")
 
 
 def _assemble(verified: list[Claim]) -> str:
@@ -67,7 +72,43 @@ def answer_from_proposal(
         # Proposer answered but nothing resolved to a real source -> refuse, don't emit uncited.
         return AnswerResult(markers=Markers(refused=True, refusal_token="INSUFFICIENT_EVIDENCE"))
 
+    # Conflict-surfacing: if the answer touches a proposition on which the RETRIEVED evidence
+    # disagrees (>=2 distinct canonical values across >=2 files), surface BOTH sides + a marker,
+    # rather than silently emitting the one side the proposer happened to pick.
+    verified_props = _verified_props(verified, retrieved)
+    conflicts = [cf for cf in detect_conflicts(retrieved) if cf.proposition in verified_props]
+    if conflicts:
+        conflict_claims: list[Claim] = []
+        for cf in conflicts:
+            for side in cf.sides:
+                conflict_claims.append(
+                    Claim(
+                        text=side.text,
+                        citation=Citation(filename=side.filename, locator=side.locator,
+                                          span=side.text),
+                        entailed=True,
+                        entail_score=1.0,
+                    )
+                )
+        answer = "Sources disagree: " + " | ".join(c.text for c in conflict_claims)
+        return AnswerResult(
+            answer_text=answer,
+            claims=conflict_claims,
+            markers=Markers(conflict=True, warning="conflicting sources surfaced"),
+        )
+
     return AnswerResult(answer_text=_assemble(verified), claims=verified, markers=Markers())
+
+
+def _verified_props(verified: list[Claim], retrieved: list[ClaimRecord]) -> set[str]:
+    """Proposition keys of the retrieved records that back the verified (emitted) claims."""
+    by_span = {(r.filename, r.locator, r.text): r for r in retrieved}
+    props: set[str] = set()
+    for c in verified:
+        r = by_span.get((c.citation.filename, c.citation.locator, c.citation.span))
+        if r is not None:
+            props.add(_proposition_key(r))
+    return props
 
 
 def answer_question(question: str, k: int, retriever, generator, entail_judge=None) -> AnswerResult:

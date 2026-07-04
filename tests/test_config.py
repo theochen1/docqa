@@ -9,7 +9,7 @@ from docqa.config import API_KEY_VAR, MissingDependencyError, Settings, require_
 def test_defaults_present():
     s = Settings.load(dotenv=False)
     # A few load-bearing defaults from algorithm-design.md §9.
-    assert s.k == 8
+    assert s.k == 12
     assert s.rrf_k == 60
     assert s.mmr_lambda == 0.5
     assert s.cluster_sim == 0.80
@@ -19,11 +19,11 @@ def test_defaults_present():
 
 
 def test_env_override(monkeypatch):
-    monkeypatch.setenv("DOCQA_K", "12")
+    monkeypatch.setenv("DOCQA_K", "20")  # distinct from the default so the override is proven
     monkeypatch.setenv("DOCQA_CLUSTER_SIM", "0.9")
     monkeypatch.setenv("DOCQA_MULTIHOP", "1")
     s = Settings.load(dotenv=False)
-    assert s.k == 12
+    assert s.k == 20
     assert s.cluster_sim == 0.9
     assert s.multihop is True
 
@@ -31,7 +31,7 @@ def test_env_override(monkeypatch):
 def test_bad_env_falls_back_to_default(monkeypatch):
     monkeypatch.setenv("DOCQA_K", "not-a-number")
     s = Settings.load(dotenv=False)
-    assert s.k == 8  # invalid value ignored, default kept
+    assert s.k == 12  # invalid value ignored, default kept
 
 
 def test_require_api_key_fails_fast_with_named_var(monkeypatch):

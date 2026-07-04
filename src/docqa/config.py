@@ -57,7 +57,7 @@ class Settings(BaseModel):
     )
 
     # --- retrieval knobs ---
-    k: int = Field(default=8, description="Final claims handed to the proposer.")
+    k: int = Field(default=12, description="Final claims handed to the proposer.")
     dense_n: int = Field(default=100, description="Dense candidate depth before fusion.")
     sparse_n: int = Field(default=100, description="Sparse (BM25) candidate depth before fusion.")
     rrf_k: int = Field(default=60, description="Reciprocal Rank Fusion constant.")
