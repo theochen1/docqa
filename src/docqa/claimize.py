@@ -32,10 +32,10 @@ _VALUE_PATTERNS = [
         r"\b(?:\d+|" + _NUM_WORD_ALT + r")\s+(?:days?|weeks?|months?|years?)\b",
         re.IGNORECASE,
     ),
-    re.compile(r"\b\d{4}-\d{1,2}-\d{1,2}\b"),                                   # iso date
-    re.compile(r"\b[A-Za-z]+\s+\d{1,2},?\s+\d{4}\b"),                           # textual date
-    re.compile(r"\b[a-z]+(?:-[a-z0-9]+)+\b", re.IGNORECASE),                    # id token gw-west-2
-    re.compile(r"-?\d[\d,]*(?:\.\d+)?%?"),                                      # signed number/percent
+    re.compile(r"\b\d{4}-\d{1,2}-\d{1,2}\b"),                # iso date
+    re.compile(r"\b[A-Za-z]+\s+\d{1,2},?\s+\d{4}\b"),        # textual date
+    re.compile(r"\b[a-z]+(?:-[a-z0-9]+)+\b", re.IGNORECASE),  # id token e.g. gw-west-2
+    re.compile(r"-?\d[\d,]*(?:\.\d+)?%?"),                   # signed number / percent
 ]
 
 _STOPWORDS = {"the", "a", "an", "is", "are", "was", "were", "of", "to", "for", "per", "and"}
