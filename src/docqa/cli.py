@@ -109,6 +109,34 @@ def _cmd_eval(args: argparse.Namespace) -> int:
 
     print(format_scoreboard(results))
     print(f"[docqa] {latency.line()}", file=sys.stderr)
+
+    if args.mutate:
+        from docqa.mutate import BASE_MUTANTS, apply_mutant, sweep
+
+        # Rebuild a persistent index for the sweep (temp dir above is gone).
+        with tempfile.TemporaryDirectory() as tmp2:
+            midx = str(Path(tmp2) / "mutate_index.db")
+            build_index(corpus, midx, embedder, decomposer=decomposer)
+
+            def run_case_fn(mutant):
+                base_gen = AnthropicGenerator(settings.gen_model, settings.max_tokens)
+                gen = apply_mutant(mutant, base_gen)
+                res, _ = run_eval(
+                    corpus, cases,
+                    lambda: DenseRetriever(IndexStore(midx), embedder), gen, k=settings.k,
+                )
+                return res
+
+            print("[docqa] mutation sweep (each mutant MUST redden >=1 case):", file=sys.stderr)
+            weak = []
+            for name, reddened in sweep(run_case_fn, BASE_MUTANTS).items():
+                status = "OK" if reddened else "WEAK (false-green!)"
+                print(f"  {name}: reddened {reddened or '[]'} [{status}]", file=sys.stderr)
+                if not reddened:
+                    weak.append(name)
+            if weak:
+                print(f"[docqa] WEAK mutants (no case caught them): {weak}", file=sys.stderr)
+
     return 0 if all(r.passed for r in results) else 1
 
 
@@ -185,6 +213,8 @@ def build_parser() -> argparse.ArgumentParser:
     ev.add_argument("--corpus", help="Corpus dir (default: bundled sample_corpus).")
     ev.add_argument("--suite", help="Cases YAML (default: eval/cases.yaml).")
     ev.add_argument("--verbose", action="store_true", help="Print per-case detail to stderr.")
+    ev.add_argument("--mutate", action="store_true",
+                    help="Run the mutation sweep: each mutant must redden >=1 case.")
     ev.set_defaults(func=_cmd_eval)
 
     return parser
