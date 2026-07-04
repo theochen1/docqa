@@ -20,6 +20,24 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_index(args: argparse.Namespace) -> int:
+    from docqa.config import Settings
+    from docqa.embed import get_embedder
+    from docqa.ingest import build_index
+
+    settings = Settings.load()
+    embedder = get_embedder(settings.embed_model)
+    manifest = build_index(args.corpus, settings.index_path, embedder)
+    print(manifest.summary())
+    if not manifest.reconciles():
+        print(
+            "ERROR: manifest does not reconcile (discovered != parsed + skipped)",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="docqa",
@@ -35,6 +53,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
     doctor = sub.add_parser("doctor", help="Fail-fast preflight: key, deps, index status.")
     doctor.set_defaults(func=_cmd_doctor)
+
+    index = sub.add_parser("index", help="Index a folder of documents into index.db.")
+    index.add_argument("corpus", help="Path to the folder of documents.")
+    index.set_defaults(func=_cmd_index)
 
     return parser
 

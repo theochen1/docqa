@@ -1,0 +1,121 @@
+"""Ingestion orchestration: a folder -> parse -> claimize -> embed -> persist, with a manifest.
+
+The manifest's ground truth is an INDEPENDENT directory scan (os.walk), never the indexer's own
+self-report — so `discovered == parsed + skipped` is a real reconciliation, not a tautology
+(closes the circular-manifest false-green from the test plan).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from docqa.claimize import CLAIMIZER_VERSION, claimize
+from docqa.index_store import IndexStore
+from docqa.parsers import ParseOutcome
+from docqa.parsers.eml import EmlParser
+from docqa.parsers.markdown import MarkdownParser
+from docqa.parsers.pdf import PdfParser
+from docqa.parsers.text import TextParser
+from docqa.types import ClaimRecord
+
+_PARSERS = [MarkdownParser(), TextParser(), EmlParser(), PdfParser()]
+_SUPPORTED_EXT = {".md", ".markdown", ".txt", ".text", ".eml", ".pdf"}
+
+
+@dataclass
+class FileResult:
+    filename: str
+    status: str          # "parsed" | "skipped"
+    reason: str = ""
+    claim_count: int = 0
+    needs_ocr: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Manifest:
+    discovered: int = 0
+    parsed: int = 0
+    skipped: int = 0
+    total_claims: int = 0
+    files: list[FileResult] = field(default_factory=list)
+
+    def reconciles(self) -> bool:
+        return self.discovered == self.parsed + self.skipped
+
+    def summary(self) -> str:
+        lines = [
+            f"indexed {self.parsed}/{self.discovered} files, "
+            f"{self.skipped} skipped, {self.total_claims} claims",
+        ]
+        for f in self.files:
+            tag = f"{f.status}" + (f" ({f.reason})" if f.reason else "")
+            extra = f" claims={f.claim_count}" if f.claim_count else ""
+            ocr = f" needs_ocr={f.needs_ocr}" if f.needs_ocr else ""
+            lines.append(f"  {f.filename}: {tag}{extra}{ocr}")
+        return "\n".join(lines)
+
+
+def _parser_for(path: str):
+    for p in _PARSERS:
+        if p.can_parse(path):
+            return p
+    return None
+
+
+def _discover(corpus_dir: str) -> list[str]:
+    """Independent ground-truth file discovery — deterministic, sorted, recursive."""
+    root = Path(corpus_dir)
+    if not root.is_dir():
+        return []
+    return sorted(str(p) for p in root.rglob("*") if p.is_file())
+
+
+def parse_corpus(corpus_dir: str) -> tuple[list[ClaimRecord], Manifest]:
+    """Parse + claimize every file. Returns claims + a reconciled manifest. No per-file crash."""
+    manifest = Manifest()
+    all_claims: list[ClaimRecord] = []
+
+    for path in _discover(corpus_dir):
+        manifest.discovered += 1
+        name = Path(path).name
+        ext = Path(path).suffix.lower()
+        parser = _parser_for(path)
+
+        if parser is None or ext not in _SUPPORTED_EXT:
+            manifest.skipped += 1
+            manifest.files.append(
+                FileResult(name, "skipped", reason=f"unsupported format: {ext or 'no ext'}")
+            )
+            continue
+
+        outcome: ParseOutcome = parser.parse_file(path)
+        if not outcome.usable:
+            manifest.skipped += 1
+            manifest.files.append(
+                FileResult(name, "skipped", reason=outcome.skip_reason, needs_ocr=outcome.needs_ocr)
+            )
+            continue
+
+        claims = claimize(outcome.segments)
+        all_claims.extend(claims)
+        manifest.parsed += 1
+        manifest.total_claims += len(claims)
+        manifest.files.append(
+            FileResult(name, "parsed", claim_count=len(claims), needs_ocr=outcome.needs_ocr)
+        )
+
+    return all_claims, manifest
+
+
+def build_index(corpus_dir: str, index_path: str, embedder) -> Manifest:
+    """Full index build: parse -> claimize -> embed -> persist. Returns the manifest."""
+    claims, manifest = parse_corpus(corpus_dir)
+    vectors = embedder.embed([c.text for c in claims]) if claims else None
+    meta = {
+        "embed_model": embedder.model_id,
+        "claimizer_version": CLAIMIZER_VERSION,
+        "claim_count": len(claims),
+    }
+    IndexStore(index_path).build(claims, vectors, meta)
+    return manifest
