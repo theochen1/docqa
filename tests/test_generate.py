@@ -63,7 +63,10 @@ def test_stub_generator_end_to_end():
     assert out["refusal_token"] is None
 
 
-def test_mark_is_stable_for_same_inputs():
+def test_mark_is_fresh_per_call_not_derivable():
+    # Security fix: the datamark must NOT be a function of inputs (else document text could forge
+    # the closing delimiter). Same inputs -> different mark each call.
     a = build_prompt("q", _claims())["mark"]
     b = build_prompt("q", _claims())["mark"]
-    assert a == b
+    assert a != b
+    assert a.startswith("MARK_") and b.startswith("MARK_")

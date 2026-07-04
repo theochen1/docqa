@@ -14,8 +14,8 @@ A stub generator drives tests; the Anthropic-backed one is lazy-loaded at runtim
 
 from __future__ import annotations
 
-import hashlib
 import json
+import secrets
 
 from docqa.types import ClaimRecord
 
@@ -30,16 +30,17 @@ _SYSTEM_RULES = (
 )
 
 
-def _run_mark(question: str, claims: list[ClaimRecord]) -> str:
-    """A per-run datamark token derived from the request (deterministic given inputs, unforgeable
-    by claim content since it depends on the whole set + question)."""
-    h = hashlib.sha1((question + "".join(c.claim_id for c in claims)).encode()).hexdigest()
-    return "MARK_" + h[:8]
+def _run_mark() -> str:
+    """A per-run datamark token from cryptographic randomness. Not derivable from the question or
+    claim ids, so document content cannot recompute it to forge the closing [/CLAIM] delimiter and
+    break out of its data block (M3-review MEDIUM)."""
+    return "MARK_" + secrets.token_hex(8)
 
 
 def build_prompt(question: str, claims: list[ClaimRecord]) -> dict:
-    """Pure prompt construction. Returns {system, user, mark, id_map} — no API call."""
-    mark = _run_mark(question, claims)
+    """Prompt construction. Returns {system, user, mark, id_map} — no API call. The datamark is
+    freshly random per call (not a function of inputs), so it can't be forged from document text."""
+    mark = _run_mark()
     # The proposer sees short local ids (c0, c1, ...), NOT claim_id/filename/locator.
     id_map = {f"c{i}": c.claim_id for i, c in enumerate(claims)}
     blocks = []

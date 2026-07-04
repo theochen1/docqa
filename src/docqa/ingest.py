@@ -104,6 +104,13 @@ def parse_corpus(corpus_dir: str, decomposer=None) -> tuple[list[ClaimRecord], M
             )
             continue
 
+        # Relabel provenance to the corpus-root-relative path so files with the same basename in
+        # different subdirs don't collide (and claim_ids, which hash filename+locator+text, stay
+        # unique across the corpus).
+        rel = str(Path(path).relative_to(corpus_dir))
+        for seg in outcome.segments:
+            seg.filename = rel
+
         claims = claimize_llm(outcome.segments, decomposer) if decomposer else claimize(
             outcome.segments
         )

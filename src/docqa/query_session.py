@@ -36,9 +36,18 @@ class CountingEmbedder:
 
 def open_for_query(index_path: str, embedder) -> tuple[IndexStore, CountingEmbedder, LoadReport]:
     """Open a persisted index for querying. Fails fast (does NOT build) if the index is missing —
-    indexing is a separate command. This is the index/query separation guard."""
+    indexing is a separate command. This is the index/query separation guard.
+
+    Also guards the embedder fingerprint: querying with a different embedder than the index was
+    built with would embed the query into an incompatible space (a crash in the matmul, or silently
+    wrong ranking). On mismatch we report it instead of proceeding — the caller refuses cleanly.
+    """
+    counting = CountingEmbedder(embedder)
     store = IndexStore(index_path)
     if not store.exists():
-        return store, CountingEmbedder(embedder), LoadReport("no index", 0)
+        return store, counting, LoadReport("no index", 0)
+    # Fingerprint: the runtime embedder must match the one the index was built with.
+    if not store.fingerprint_matches({"embed_model": getattr(embedder, "model_id", None)}):
+        return store, counting, LoadReport("fingerprint mismatch", 0)
     # Reuse the persisted artifact; the corpus is NOT re-embedded here (0 corpus embed calls).
-    return store, CountingEmbedder(embedder), LoadReport("loaded persisted index", 0)
+    return store, counting, LoadReport("loaded persisted index", 0)

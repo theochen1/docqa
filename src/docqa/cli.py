@@ -38,6 +38,13 @@ def _cmd_ask(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    if report.load_path == "fingerprint mismatch":
+        print(
+            f"ERROR: index at {settings.index_path} was built with a different embedder than "
+            f"{embedder.model_id}. Re-run `docqa index` (or set DOCQA_EMBED_MODEL to match).",
+            file=sys.stderr,
+        )
+        return 1
 
     retriever = DenseRetriever(store, counting)
     generator = AnthropicGenerator(settings.gen_model, settings.max_tokens)
