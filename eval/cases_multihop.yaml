@@ -1,0 +1,42 @@
+# Multi-hop eval suite (BT23) — OPT-IN, requires DOCQA_MULTIHOP=1 + an API key.
+#
+# Kept SEPARATE from the graded eval/cases.yaml on purpose: multi-hop is a SHOULD that is OFF by
+# default (latency), so the default suite must not depend on it. Run with:
+#   DOCQA_MULTIHOP=1 uv run docqa eval --suite eval/cases_multihop.yaml
+#
+# IMPORTANT (design-review finding): the sample corpus is tiny, so a real retriever can sometimes
+# co-locate the bridge doc + target doc in ONE retrieval and answer T01 single-hop — which would make
+# T01 a false-green that proves nothing about the LOOP. The load-bearing proof of the loop lives in
+# tests/test_multihop.py (a stub retriever where the single-hop join is IMPOSSIBLE, asserting
+# hops==1). These end-to-end cases check the REAL pipeline produces the right OBSERVABLE outcome
+# (join answer + 2 cites, or refuse) — they are the integration layer, not the mechanism proof.
+
+cases:
+  - id: T01-MULTIHOP
+    question: "In which datacenter is the platform team's primary gateway located?"
+    expect:
+      refused: false
+      gold: ["Fairbanks"]
+      cite_files: ["network_ref.md", "onboarding_email.eml"]
+    guarantees: [multihop, citations]
+    notes: >
+      SMOKE/INTEGRATION case, not the loop's mechanism proof. Two-hop join keyed on a unique codename:
+      network_ref.md says the platform team's gateway is codenamed BLUEJAY; onboarding_email.eml says
+      BLUEJAY is in the Fairbanks datacenter. The answer requires BOTH facts, so it must answer
+      "Fairbanks" citing BOTH files (the >=2-file join gate). HONEST CAVEAT: on this tiny sample corpus
+      (~55 claims, k=12) retrieval often surfaces both docs in ONE pass, so the proposer joins them
+      single-hop (meta.hops == 0) — the observable outcome is right but the LOOP may not fire. The
+      loop mechanism is proven where it can't false-green: tests/test_multihop.py (a stub retriever
+      that makes the single-hop join IMPOSSIBLE, asserting hops==1) and T16-CS-SINGLE below (which
+      genuinely hops on the real model).
+
+  - id: T16-CS-SINGLE
+    question: "In which datacenter is the security team's primary gateway located?"
+    expect:
+      refused: true
+    guarantees: [multihop]
+    notes: >
+      The bridge exists (network_ref.md: security team's gateway is codenamed KESTREL) but NO document
+      states where KESTREL is racked. The hop finds the bridge, retrieves for KESTREL, finds no target
+      -> the join gate (>=2 sources) refuses. Proves multi-hop does not stitch a confident guess from a
+      single source when the second hop comes up empty.

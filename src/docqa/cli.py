@@ -62,10 +62,16 @@ def _cmd_ask(args: argparse.Namespace) -> int:
 
     retriever = HybridRetriever(store, counting, rrf_k=settings.rrf_k,
                                 dense_n=settings.dense_n, sparse_n=settings.sparse_n)
-    generator = AnthropicGenerator(settings.gen_model, settings.max_tokens)
+    # Multi-hop (BT23) is off unless DOCQA_MULTIHOP is set. The engage decision is single-sourced
+    # here: the lookup-enabled proposer and max_hops>0 are wired together or not at all.
+    generator = AnthropicGenerator(settings.gen_model, settings.max_tokens,
+                                   allow_lookup=settings.multihop)
     judge = AnthropicEntailmentJudge(settings.gen_model)
+    max_hops = settings.max_hops if settings.multihop else 0
+    hop_deadline_ms = settings.hop_deadline_ms if settings.multihop else None
     result = answer_question(args.question, settings.k, retriever, generator, entail_judge=judge,
-                             oos_floor=settings.oos_floor)
+                             oos_floor=settings.oos_floor, max_hops=max_hops,
+                             hop_deadline_ms=hop_deadline_ms)
 
     # Query path must never re-embed the corpus (R-PERSIST): only the query is embedded.
     print(f"[docqa] corpus_embed_calls={report.corpus_embed_calls}", file=sys.stderr)
@@ -118,14 +124,18 @@ def _cmd_eval(args: argparse.Namespace) -> int:
         def build_retriever():
             return HybridRetriever(IndexStore(idx), embedder, rrf_k=settings.rrf_k)
 
-        generator = AnthropicGenerator(settings.gen_model, settings.max_tokens)
+        generator = AnthropicGenerator(settings.gen_model, settings.max_tokens,
+                                       allow_lookup=settings.multihop)
         judge = None
         if decomposer is not None:  # a key is present -> use the real entailment gate
             from docqa.entail import AnthropicEntailmentJudge
             judge = AnthropicEntailmentJudge(settings.gen_model)
+        max_hops = settings.max_hops if settings.multihop else 0
+        hop_deadline_ms = settings.hop_deadline_ms if settings.multihop else None
         results, latency = run_eval(corpus, cases, build_retriever, generator, k=settings.k,
                                     verbose=args.verbose, entail_judge=judge,
-                                    oos_floor=settings.oos_floor)
+                                    oos_floor=settings.oos_floor, max_hops=max_hops,
+                                    hop_deadline_ms=hop_deadline_ms)
         # Stamp corpus size onto the latency report (sample scale — INFO only, not the SLO).
         store = IndexStore(idx)
         claims = store.load_claims()

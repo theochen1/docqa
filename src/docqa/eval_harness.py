@@ -114,10 +114,15 @@ def run_eval(
     latency: LatencyReport | None = None,
     entail_judge=None,
     oos_floor: float | None = None,
+    max_hops: int = 0,
+    hop_deadline_ms: int | None = None,
 ) -> tuple[list[CaseResult], LatencyReport]:
     """Run all cases. build_retriever() -> a Retriever over the freshly-built index; generator is
     the proposer; entail_judge (optional) is the R-ENTAIL gate. All injected so tests can drive
-    with stubs and the CLI with the real stack. Per-case latency is recorded into `latency`."""
+    with stubs and the CLI with the real stack. Per-case latency is recorded into `latency`.
+
+    `max_hops`/`hop_deadline_ms` (BT23): default 0/None keeps the loop off (the graded default);
+    the multi-hop suite passes them through. Per-case hop count is recorded into `latency`."""
     cases = load_cases(cases_path)
     retriever = build_retriever()
     report = latency if latency is not None else LatencyReport()
@@ -125,8 +130,10 @@ def run_eval(
     for case in cases:
         with Timer() as t:
             result = answer_question(case["question"], k, retriever, generator,
-                                     entail_judge=entail_judge, oos_floor=oos_floor)
+                                     entail_judge=entail_judge, oos_floor=oos_floor,
+                                     max_hops=max_hops, hop_deadline_ms=hop_deadline_ms)
         report.samples_ms.append(t.elapsed_ms)
+        report.hops_per_query.append(result.meta.get("hops", 0))
         cr = check_case(case, result)
         results.append(cr)
         if verbose:

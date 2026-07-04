@@ -21,6 +21,7 @@ class LatencyReport:
     n_claims: int = 0
     n_words: int = 0
     scale: str = "sample"  # "sample" (INFO only) | "full" (SLO-gated at BT24)
+    hops_per_query: list[int] = field(default_factory=list)  # BT23: hops taken per query
 
     def _pct(self, p: float) -> float:
         if not self.samples_ms:
@@ -38,15 +39,25 @@ class LatencyReport:
     def p95(self) -> float:
         return self._pct(95)
 
+    @property
+    def hop_fraction(self) -> float:
+        """Fraction of queries that took >=1 hop — so a grader sees multi-hop stayed off the common
+        path (it is OFF by default; when enabled this shows how rarely it engaged)."""
+        if not self.hops_per_query:
+            return 0.0
+        return sum(1 for h in self.hops_per_query if h > 0) / len(self.hops_per_query)
+
     def env_stamp(self) -> str:
         py = f"py{sys.version_info.major}.{sys.version_info.minor}"
         return f"{py} {platform.system()}/{platform.machine()}"
 
     def line(self) -> str:
         label = "" if self.scale == "full" else " (sample — NOT the SLO number)"
+        hopped = sum(1 for h in self.hops_per_query if h > 0)
         return (
             f"latency p50={self.p50:.0f}ms p95={self.p95:.0f}ms{label} | "
             f"corpus={self.n_docs} docs / {self.n_claims} claims / {self.n_words} words | "
+            f"hops={hopped}/{len(self.hops_per_query)} ({self.hop_fraction:.0%}) | "
             f"env={self.env_stamp()} | n={len(self.samples_ms)}"
         )
 

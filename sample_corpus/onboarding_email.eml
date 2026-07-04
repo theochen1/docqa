@@ -1,0 +1,10 @@
+From: ops@aldermere.example
+To: newhires@aldermere.example
+Subject: Datacenter placement for BLUEJAY and HERON
+Date: Mon, 14 Apr 2025 09:12:00 -0700
+
+Welcome aboard. A quick reference on where our gateways live:
+
+BLUEJAY is racked in the Fairbanks datacenter. HERON is racked in the Denver datacenter.
+
+Reach out to ops if you need physical access to either site.
