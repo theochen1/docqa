@@ -122,6 +122,60 @@ def render_answer(result: AnswerResult, color: bool = False) -> str:
     return "\n".join(parts)
 
 
+def banner(index_path: str, n_claims: int, n_docs: int, color: bool = False) -> str:
+    """The one-time chat header: what's loaded + how to drive it."""
+    title = paint("docqa", "bold", color) + " — grounded Q&A over your documents"
+    loaded = paint(f"index: {index_path}  ·  {n_claims} claims from {n_docs} docs",
+                   "dim", color)
+    hint = paint("Type a question. /help for commands, /exit to quit.", "dim", color)
+    return f"{title}\n{loaded}\n{hint}"
+
+
+_CHAT_HELP = """commands:
+  /help            show this help
+  /verbose         toggle pipeline diagnostics (load path, hops, model)
+  /exit, /quit     leave the session (Ctrl-D also works)
+anything else is treated as a question about the indexed documents."""
+
+
+def run_chat(answer_fn, *, banner_text, prompt="you › ", read=input,
+             write=print, color=False, verbose_state=None) -> int:
+    """The REPL loop — pure control flow, injectable I/O so it is unit-testable without a TTY/LLM.
+
+    `answer_fn(question, verbose) -> str` runs one turn and returns the rendered answer text
+    (the CLI supplies a closure over the loaded retriever/generator, so the model + index load ONCE
+    for the whole session — the real point of a chat mode). `read`/`write` are injected so tests
+    drive scripted input and capture output. `/`-commands are handled here; everything else is a
+    question. Returns an exit code (0 = clean exit).
+    """
+    state = {"verbose": bool(verbose_state)}
+    if banner_text:
+        write(banner_text)
+    while True:
+        try:
+            line = read(prompt)
+        except (EOFError, KeyboardInterrupt):
+            write("")  # newline so the shell prompt starts clean after Ctrl-D / Ctrl-C
+            return 0
+        q = line.strip()
+        if not q:
+            continue
+        if q in ("/exit", "/quit"):
+            return 0
+        if q == "/help":
+            write(_CHAT_HELP)
+            continue
+        if q == "/verbose":
+            state["verbose"] = not state["verbose"]
+            write(paint(f"verbose {'on' if state['verbose'] else 'off'}", "dim", color))
+            continue
+        if q.startswith("/"):
+            write(paint(f"unknown command {q!r} — try /help", "yellow", color))
+            continue
+        write(answer_fn(q, state["verbose"]))
+    return 0
+
+
 class Spinner:
     """A minimal stderr spinner so the LLM wait isn't dead air. Animates only on a TTY (a daemon
     thread); a no-op otherwise (piped output / CI stays clean). Use as a context manager."""

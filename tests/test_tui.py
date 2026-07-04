@@ -2,10 +2,12 @@
 
 from docqa.tui import (
     Spinner,
+    banner,
     paint,
     quiet_ml_logs,
     render_answer,
     render_citations,
+    run_chat,
     use_color,
 )
 from docqa.types import AnswerResult, Citation, Claim, Markers
@@ -131,3 +133,83 @@ def test_quiet_ml_logs_offline_is_soft_default(monkeypatch):
     quiet_ml_logs()
     import os
     assert os.environ["HF_HUB_OFFLINE"] == "0"
+
+
+# --- chat REPL loop (scripted I/O, no TTY / no LLM) ---
+
+def _scripted_reader(lines):
+    """A read() that returns queued lines then raises EOFError (like Ctrl-D)."""
+    it = iter(lines)
+
+    def read(_prompt):
+        try:
+            return next(it)
+        except StopIteration as e:
+            raise EOFError from e
+    return read
+
+
+def _capture():
+    out = []
+    return out, (lambda s="": out.append(s))
+
+
+def test_chat_answers_each_question_then_exits_on_eof():
+    answered = []
+
+    def answer_fn(q, verbose):
+        answered.append(q)
+        return f"ANSWER<{q}>"
+
+    out, write = _capture()
+    code = run_chat(answer_fn, banner_text="BANNER",
+                    read=_scripted_reader(["what is PTO?", "office hours?"]), write=write)
+    assert code == 0
+    assert answered == ["what is PTO?", "office hours?"]      # both questions ran
+    assert "BANNER" in out[0]
+    assert "ANSWER<what is PTO?>" in out and "ANSWER<office hours?>" in out
+
+
+def test_chat_exit_command_stops_before_more_input():
+    answered = []
+    out, write = _capture()
+    code = run_chat(lambda q, v: answered.append(q) or "x", banner_text="",
+                    read=_scripted_reader(["/exit", "should-not-run"]), write=write)
+    assert code == 0
+    assert answered == []                                     # /exit stopped the loop immediately
+
+
+def test_chat_blank_lines_are_skipped():
+    calls = []
+    run_chat(lambda q, v: calls.append(q) or "x", banner_text="",
+             read=_scripted_reader(["", "   ", "real question"]), write=lambda s="": None)
+    assert calls == ["real question"]                         # blanks never hit the answer fn
+
+
+def test_chat_help_command_prints_help_and_continues():
+    out, write = _capture()
+    run_chat(lambda q, v: "x", banner_text="",
+             read=_scripted_reader(["/help"]), write=write)
+    assert any("commands:" in line for line in out)
+
+
+def test_chat_verbose_toggle_flips_state_passed_to_answer_fn():
+    seen = []
+    run_chat(lambda q, v: seen.append(v) or "x", banner_text="",
+             read=_scripted_reader(["q1", "/verbose", "q2"]),
+             write=lambda s="": None, verbose_state=False)
+    assert seen == [False, True]                              # toggled on between the two questions
+
+
+def test_chat_unknown_slash_command_warns_not_answers():
+    answered = []
+    out, write = _capture()
+    run_chat(lambda q, v: answered.append(q) or "x", banner_text="",
+             read=_scripted_reader(["/bogus"]), write=write)
+    assert answered == []                                     # not treated as a question
+    assert any("unknown command" in line for line in out)
+
+
+def test_banner_reports_loaded_index():
+    b = banner("index.db", n_claims=55, n_docs=11, color=False)
+    assert "55 claims" in b and "11 docs" in b and "index.db" in b

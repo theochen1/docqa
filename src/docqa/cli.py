@@ -21,78 +21,122 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+class _QuerySession:
+    """Loads the index + model ONCE and answers many questions. Both `ask` (one turn) and `chat`
+    (a REPL) build one — for chat this is the whole point: the embedder/model load a single time,
+    so follow-up questions skip the slow startup. Returns (session, error_code): error_code is a
+    non-None exit code when the index is missing/mismatched (the caller returns it)."""
+
+    def __init__(self, settings, store, counting, report, retriever, generator, judge):
+        self.settings = settings
+        self.store = store
+        self.counting = counting
+        self.report = report
+        self.retriever = retriever
+        self.generator = generator
+        self.judge = judge
+
+    @classmethod
+    def open(cls, diag=lambda _m: None):
+        from docqa.config import Settings
+        from docqa.embed import get_embedder
+        from docqa.query_session import open_for_query
+        from docqa.tui import quiet_ml_logs
+
+        # Quiet the ML stack's advisory noise BEFORE the embedder imports (flags read at import).
+        quiet_ml_logs()
+        settings = Settings.load()
+        embedder = get_embedder(settings.embed_model)
+        store, counting, report = open_for_query(settings.index_path, embedder)
+        diag(report.load_path)
+        if report.load_path == "no index":
+            print(f"ERROR: no index at {settings.index_path}. Run `docqa index <folder>` first.",
+                  file=sys.stderr)
+            return None, 1
+        if report.load_path == "fingerprint mismatch":
+            print(f"ERROR: index at {settings.index_path} was built with a different embedder than "
+                  f"{embedder.model_id}. Re-run `docqa index` (or set DOCQA_EMBED_MODEL to match).",
+                  file=sys.stderr)
+            return None, 1
+
+        from docqa.entail import AnthropicEntailmentJudge
+        from docqa.generate import AnthropicGenerator
+        from docqa.retrieval.hybrid import HybridRetriever
+
+        retriever = HybridRetriever(store, counting, rrf_k=settings.rrf_k,
+                                    dense_n=settings.dense_n, sparse_n=settings.sparse_n)
+        # Multi-hop (BT23) is off unless DOCQA_MULTIHOP is set; engage decision is single-sourced.
+        generator = AnthropicGenerator(settings.gen_model, settings.max_tokens,
+                                       allow_lookup=settings.multihop)
+        judge = AnthropicEntailmentJudge(settings.gen_model)
+        return cls(settings, store, counting, report, retriever, generator, judge), None
+
+    def answer(self, question: str, verbose: bool = False) -> str:
+        """Run one turn and return the rendered answer string. Diagnostics go to stderr."""
+        from docqa.core import answer_question
+        from docqa.tui import Spinner, render_answer, use_color
+
+        s = self.settings
+        max_hops = s.max_hops if s.multihop else 0
+        hop_deadline_ms = s.hop_deadline_ms if s.multihop else None
+        with Spinner("Thinking"):
+            result = answer_question(question, s.k, self.retriever, self.generator,
+                                     entail_judge=self.judge, oos_floor=s.oos_floor,
+                                     max_hops=max_hops, hop_deadline_ms=hop_deadline_ms)
+        if verbose:
+            print(f"[docqa] corpus_embed_calls={self.report.corpus_embed_calls}", file=sys.stderr)
+            print(f"[docqa] hops={result.meta.get('hops', 0)} "
+                  f"model={result.meta.get('gen_model', '?')}", file=sys.stderr)
+        return render_answer(result, color=use_color())
+
+
 def _cmd_ask(args: argparse.Namespace) -> int:
-    from docqa.config import Settings
-    from docqa.core import answer_question
-    from docqa.tui import Spinner, quiet_ml_logs, render_answer, use_color
+    from docqa.types import EXIT_EMPTY_CORPUS, EXIT_EMPTY_QUERY
 
     verbose = getattr(args, "verbose", False)
 
     def diag(msg: str) -> None:
-        """Grader/debug diagnostics — only under --verbose so a normal answer stays clean."""
         if verbose:
             print(f"[docqa] {msg}", file=sys.stderr)
 
-    # Quiet the ML stack's advisory noise BEFORE the embedder imports (env flags read at import).
-    quiet_ml_logs()
-
-    from docqa.embed import get_embedder
-    from docqa.query_session import open_for_query
-
-    settings = Settings.load()
-    embedder = get_embedder(settings.embed_model)
-    store, counting, report = open_for_query(settings.index_path, embedder)
-    diag(report.load_path)
-    if report.load_path == "no index":
-        print(
-            f"ERROR: no index at {settings.index_path}. Run `docqa index <folder>` first.",
-            file=sys.stderr,
-        )
-        return 1
-    if report.load_path == "fingerprint mismatch":
-        print(
-            f"ERROR: index at {settings.index_path} was built with a different embedder than "
-            f"{embedder.model_id}. Re-run `docqa index` (or set DOCQA_EMBED_MODEL to match).",
-            file=sys.stderr,
-        )
-        return 1
-
-    from docqa.entail import AnthropicEntailmentJudge
-    from docqa.generate import AnthropicGenerator
-    from docqa.retrieval.hybrid import HybridRetriever
-    from docqa.types import EXIT_EMPTY_CORPUS, EXIT_EMPTY_QUERY
+    session, err = _QuerySession.open(diag=diag)
+    if err is not None:
+        return err
 
     # Degenerate empty/whitespace query -> reserved exit code (BT20b), not a spoofable message.
     if not args.question or not args.question.strip():
         diag("empty query")
         return EXIT_EMPTY_QUERY
-
-    # Empty index (empty corpus or all files skipped) -> reserved exit code.
-    if store.count() == 0:
+    if session.store.count() == 0:
         diag("empty corpus: index has zero claims")
         return EXIT_EMPTY_CORPUS
 
-    retriever = HybridRetriever(store, counting, rrf_k=settings.rrf_k,
-                                dense_n=settings.dense_n, sparse_n=settings.sparse_n)
-    # Multi-hop (BT23) is off unless DOCQA_MULTIHOP is set. The engage decision is single-sourced
-    # here: the lookup-enabled proposer and max_hops>0 are wired together or not at all.
-    generator = AnthropicGenerator(settings.gen_model, settings.max_tokens,
-                                   allow_lookup=settings.multihop)
-    judge = AnthropicEntailmentJudge(settings.gen_model)
-    max_hops = settings.max_hops if settings.multihop else 0
-    hop_deadline_ms = settings.hop_deadline_ms if settings.multihop else None
-
-    with Spinner("Thinking"):
-        result = answer_question(args.question, settings.k, retriever, generator,
-                                 entail_judge=judge, oos_floor=settings.oos_floor,
-                                 max_hops=max_hops, hop_deadline_ms=hop_deadline_ms)
-
-    # Query path must never re-embed the corpus (R-PERSIST): only the query is embedded.
-    diag(f"corpus_embed_calls={report.corpus_embed_calls}")
-    diag(f"hops={result.meta.get('hops', 0)} model={result.meta.get('gen_model', '?')}")
-
-    print(render_answer(result, color=use_color()))
+    print(session.answer(args.question, verbose=verbose))
     return 0
+
+
+def _cmd_chat(args: argparse.Namespace) -> int:
+    from docqa.tui import banner, run_chat, use_color
+
+    verbose = getattr(args, "verbose", False)
+
+    def diag(msg: str) -> None:
+        if verbose:
+            print(f"[docqa] {msg}", file=sys.stderr)
+
+    session, err = _QuerySession.open(diag=diag)
+    if err is not None:
+        return err
+    if session.store.count() == 0:
+        print("ERROR: the index has zero claims. Re-run `docqa index <folder>`.", file=sys.stderr)
+        from docqa.types import EXIT_EMPTY_CORPUS
+        return EXIT_EMPTY_CORPUS
+
+    color = use_color()
+    claims = session.store.load_claims()
+    n_docs = len({c.filename for c in claims})
+    head = banner(session.settings.index_path, len(claims), n_docs, color=color)
+    return run_chat(session.answer, banner_text=head, color=color, verbose_state=verbose)
 
 
 # Probe queries for the blocking latency gate (BT24). They match the fact templates
@@ -349,6 +393,12 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("--verbose", "-v", action="store_true",
                      help="Print pipeline diagnostics (load path, embed calls, hops) to stderr.")
     ask.set_defaults(func=_cmd_ask)
+
+    chat = sub.add_parser("chat", help="Interactive REPL: ask many questions in one session "
+                                       "(model + index load once).")
+    chat.add_argument("--verbose", "-v", action="store_true",
+                      help="Start with pipeline diagnostics on (toggle in-session with /verbose).")
+    chat.set_defaults(func=_cmd_chat)
 
     ev = sub.add_parser("eval", help="Run the eval harness against the sample corpus.")
     ev.add_argument("--corpus", help="Corpus dir (default: bundled sample_corpus).")
