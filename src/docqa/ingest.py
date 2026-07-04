@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from docqa.claimize import CLAIMIZER_VERSION, claimize
+from docqa.claimize import CLAIMIZER_VERSION, claimize, claimize_llm
 from docqa.index_store import IndexStore
 from docqa.parsers import ParseOutcome
 from docqa.parsers.eml import EmlParser
@@ -38,6 +38,7 @@ class Manifest:
     parsed: int = 0
     skipped: int = 0
     total_claims: int = 0
+    claimizer: str = "deterministic"
     files: list[FileResult] = field(default_factory=list)
 
     def reconciles(self) -> bool:
@@ -46,7 +47,8 @@ class Manifest:
     def summary(self) -> str:
         lines = [
             f"indexed {self.parsed}/{self.discovered} files, "
-            f"{self.skipped} skipped, {self.total_claims} claims",
+            f"{self.skipped} skipped, {self.total_claims} claims "
+            f"(claimizer: {self.claimizer})",
         ]
         for f in self.files:
             tag = f"{f.status}" + (f" ({f.reason})" if f.reason else "")
@@ -71,9 +73,14 @@ def _discover(corpus_dir: str) -> list[str]:
     return sorted(str(p) for p in root.rglob("*") if p.is_file())
 
 
-def parse_corpus(corpus_dir: str) -> tuple[list[ClaimRecord], Manifest]:
-    """Parse + claimize every file. Returns claims + a reconciled manifest. No per-file crash."""
+def parse_corpus(corpus_dir: str, decomposer=None) -> tuple[list[ClaimRecord], Manifest]:
+    """Parse + claimize every file. Returns claims + a reconciled manifest. No per-file crash.
+
+    `decomposer` (LLM) is the PRIMARY claimization path when supplied; without it, the deterministic
+    regex fallback runs. Either way canon.py gates value equality.
+    """
     manifest = Manifest()
+    manifest.claimizer = "llm" if decomposer is not None else "deterministic"
     all_claims: list[ClaimRecord] = []
 
     for path in _discover(corpus_dir):
@@ -97,7 +104,9 @@ def parse_corpus(corpus_dir: str) -> tuple[list[ClaimRecord], Manifest]:
             )
             continue
 
-        claims = claimize(outcome.segments)
+        claims = claimize_llm(outcome.segments, decomposer) if decomposer else claimize(
+            outcome.segments
+        )
         all_claims.extend(claims)
         manifest.parsed += 1
         manifest.total_claims += len(claims)
@@ -108,13 +117,17 @@ def parse_corpus(corpus_dir: str) -> tuple[list[ClaimRecord], Manifest]:
     return all_claims, manifest
 
 
-def build_index(corpus_dir: str, index_path: str, embedder) -> Manifest:
-    """Full index build: parse -> claimize -> embed -> persist. Returns the manifest."""
-    claims, manifest = parse_corpus(corpus_dir)
+def build_index(corpus_dir: str, index_path: str, embedder, decomposer=None) -> Manifest:
+    """Full index build: parse -> claimize -> embed -> persist. Returns the manifest.
+
+    `decomposer` (LLM) is the primary claimizer when supplied; else the deterministic fallback.
+    """
+    claims, manifest = parse_corpus(corpus_dir, decomposer=decomposer)
     vectors = embedder.embed([c.text for c in claims]) if claims else None
     meta = {
         "embed_model": embedder.model_id,
         "claimizer_version": CLAIMIZER_VERSION,
+        "claimizer": manifest.claimizer,
         "claim_count": len(claims),
     }
     IndexStore(index_path).build(claims, vectors, meta)

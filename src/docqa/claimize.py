@@ -109,16 +109,29 @@ def claimize(segments: list[TextSegment]) -> list[ClaimRecord]:
 CLAIMIZER_VERSION_LLM = "llm-1"
 
 
-def _record_from_llm_claim(seg: TextSegment, sentence: str, value_span: str) -> ClaimRecord:
+def _record_from_llm_claim(seg: TextSegment, item: dict) -> ClaimRecord | None:
+    """Build a ClaimRecord from one LLM-decomposed claim dict.
+
+    The LLM does the NLP — it returns claim text, subject, predicate, and the value span. canon.py
+    is the deterministic GATE that only normalizes the value for equality. Subject/predicate fall
+    back to the heuristic only if the model omitted them (defensive, not the primary path).
+    """
     from docqa.canon import canonicalize as _canon
 
+    text = (item.get("text") or "").strip()
+    if not text:
+        return None
+    value_span = (item.get("value_span") or "").strip()
+    subj = (item.get("subject") or "").strip().lower()
+    pred = (item.get("predicate") or "").strip().lower()
+    if not subj and not pred:
+        subj, pred = _proposition_key(text, value_span)
     vtype, vcanon = _canon(value_span) if value_span else (ValueType.STRING, "")
-    subj, pred = _proposition_key(sentence, value_span)
     return ClaimRecord(
-        claim_id=_claim_id(seg.filename, seg.locator, sentence),
+        claim_id=_claim_id(seg.filename, seg.locator, text),
         filename=seg.filename,
         locator=seg.locator,
-        text=sentence,
+        text=text,
         subject_norm=subj,
         predicate_norm=pred,
         value_span=value_span,
@@ -129,12 +142,13 @@ def _record_from_llm_claim(seg: TextSegment, sentence: str, value_span: str) -> 
 
 
 def claimize_segment_llm(seg: TextSegment, decomposer) -> list[ClaimRecord]:
-    """Use an LLM decomposer to split a segment into atomic claims.
+    """PRIMARY claimization: the LLM decomposer splits a segment into atomic claims.
 
-    `decomposer` is any callable `(text) -> list[{"text","value_span"}]` (a thin adapter over a
-    Generator). On ANY failure or empty result, fall back to the deterministic path so ingestion
-    never breaks. Value canonicalization + proposition-key still run deterministically over the
-    LLM's claim text (the model proposes atoms; canon.py decides values).
+    `decomposer` is any callable `(text) -> list[{"text","subject","predicate","value_span"}]`
+    (a thin adapter over a Generator — the agent's NLP does the reasoning). On ANY failure or empty
+    result, fall back to the deterministic regex path so ingestion never hard-breaks (the no-key
+    reliability floor). canon.py remains the deterministic value-equality gate over the model's
+    value span.
     """
     try:
         proposed = decomposer(seg.text)
@@ -143,13 +157,7 @@ def claimize_segment_llm(seg: TextSegment, decomposer) -> list[ClaimRecord]:
     if not proposed:
         return claimize_segment(seg)
 
-    claims: list[ClaimRecord] = []
-    for item in proposed:
-        text = (item.get("text") or "").strip()
-        if not text:
-            continue
-        value_span = (item.get("value_span") or _extract_value(text)).strip()
-        claims.append(_record_from_llm_claim(seg, text, value_span))
+    claims = [r for item in proposed if (r := _record_from_llm_claim(seg, item)) is not None]
     return claims or claimize_segment(seg)
 
 

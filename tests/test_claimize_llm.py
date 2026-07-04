@@ -44,7 +44,14 @@ def test_llm_path_falls_back_on_empty():
     assert len(claims) == 1
 
 
-def test_llm_claims_missing_value_span_recovered():
-    # Decomposer omits value_span -> claimizer extracts it deterministically.
-    claims = claimize_segment_llm(_seg("x"), lambda t: [{"text": "Total is $4,250.00 due."}])
-    assert claims[0].value_canon == "4250.00"
+def test_llm_owns_value_extraction():
+    # New contract (BT08b): the LLM is the value extractor. If it supplies the span, canon.py
+    # gates it; if it omits it, we do NOT regex-recover on the primary path (the model judged
+    # there is no salient value). This is the "agent does the NLP, script gates" division.
+    with_value = claimize_segment_llm(
+        _seg("x"), lambda t: [{"text": "Total is $4,250.00 due.", "value_span": "$4,250.00"}]
+    )
+    assert with_value[0].value_canon == "4250.00"  # canon gates the model-provided span
+
+    omitted = claimize_segment_llm(_seg("x"), lambda t: [{"text": "Total is $4,250.00 due."}])
+    assert omitted[0].value_span == ""  # no regex second-guessing on the LLM path

@@ -56,14 +56,36 @@ def _cmd_ask(args: argparse.Namespace) -> int:
 
 
 def _cmd_index(args: argparse.Namespace) -> int:
-    from docqa.config import Settings
+    import os
+
+    from docqa.config import API_KEY_VAR, Settings
     from docqa.embed import get_embedder
     from docqa.ingest import build_index
 
     settings = Settings.load()
     embedder = get_embedder(settings.embed_model)
-    manifest = build_index(args.corpus, settings.index_path, embedder)
+
+    # LLM claimization is the PRIMARY path when a key is present; else deterministic fallback.
+    # --no-llm forces the fallback (key-free / cost-free indexing, documented as degraded quality).
+    decomposer = None
+    meter = None
+    use_llm = bool(os.environ.get(API_KEY_VAR, "").strip()) and not args.no_llm
+    if use_llm:
+        from docqa.claimizer_llm import AnthropicClaimizer, UsageMeter
+
+        meter = UsageMeter()
+        decomposer = AnthropicClaimizer(settings.gen_model, meter=meter)
+    else:
+        reason = "--no-llm" if args.no_llm else f"{API_KEY_VAR} not set"
+        print(
+            f"[docqa] LLM claimizer off ({reason}) — using deterministic fallback.",
+            file=sys.stderr,
+        )
+
+    manifest = build_index(args.corpus, settings.index_path, embedder, decomposer=decomposer)
     print(manifest.summary())
+    if meter is not None:
+        print(f"[docqa] {meter.summary()}", file=sys.stderr)
     if not manifest.reconciles():
         print(
             "ERROR: manifest does not reconcile (discovered != parsed + skipped)",
@@ -91,6 +113,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     index = sub.add_parser("index", help="Index a folder of documents into index.db.")
     index.add_argument("corpus", help="Path to the folder of documents.")
+    index.add_argument(
+        "--no-llm",
+        action="store_true",
+        help="Force the deterministic claimizer (no API key / no cost; degraded quality).",
+    )
     index.set_defaults(func=_cmd_index)
 
     ask = sub.add_parser("ask", help="Ask a question against the persisted index.")
