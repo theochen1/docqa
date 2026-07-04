@@ -83,6 +83,13 @@ class Settings(BaseModel):
         "Tuned on the sample corpus (off-domain ~0.38 vs on-domain ~0.59+); tuned-not-universal.",
     )
 
+    # --- latency (the chosen operational constraint) ---
+    latency_slo_ms: int = Field(
+        default=5000,
+        description="Blocking p50 SLO enforced on the FULL-scale corpus (BT24). The chosen "
+        "constraint; sample-corpus latency is INFO-only.",
+    )
+
     # --- multi-hop (SHOULD, off by default) ---
     multihop: bool = Field(default=False, description="Enable the bounded retrieve-read loop.")
     max_hops: int = Field(default=1, description="Extra retrieve-read rounds beyond the first.")
@@ -132,6 +139,9 @@ class Settings(BaseModel):
                 "DOCQA_CONFLICT_THRESHOLD", cls.model_fields["conflict_threshold"].default, float
             ),
             oos_floor=num("DOCQA_OOS_FLOOR", cls.model_fields["oos_floor"].default, float),
+            latency_slo_ms=int(
+                num("DOCQA_LATENCY_SLO_MS", cls.model_fields["latency_slo_ms"].default, int)
+            ),
             multihop=_env("DOCQA_MULTIHOP", "0") not in ("0", "", "false", "False"),
             max_hops=int(num("DOCQA_MAX_HOPS", cls.model_fields["max_hops"].default, int)),
             hop_deadline_ms=int(

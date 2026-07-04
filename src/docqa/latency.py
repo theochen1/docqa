@@ -62,6 +62,55 @@ class LatencyReport:
         )
 
 
+@dataclass
+class GateResult:
+    """The outcome of the blocking full-scale latency gate (BT24). `blocking` is what the CLI turns
+    into an exit code; `skipped` means the scale corpus was absent (offline / fresh-clone) so the
+    gate could not run — that is GREEN by design, never a silent pass presented as a real number."""
+
+    status: str          # "pass" | "fail" | "skip"
+    reason: str
+    p50_ms: float = 0.0
+    slo_ms: float = 0.0
+
+    @property
+    def blocking(self) -> bool:
+        """Only a genuine over-SLO measurement blocks. A skip (no corpus) does not."""
+        return self.status == "fail"
+
+    def line(self) -> str:
+        if self.status == "skip":
+            return f"latency GATE skipped: {self.reason}"
+        verdict = "PASS" if self.status == "pass" else "FAIL"
+        return (f"latency GATE {verdict}: p50={self.p50_ms:.0f}ms "
+                f"{'<' if self.status == 'pass' else '>='} SLO={self.slo_ms:.0f}ms ({self.reason})")
+
+
+def evaluate_gate(report: LatencyReport, slo_ms: float, corpus_present: bool,
+                  reason: str = "") -> GateResult:
+    """Decide the blocking gate purely (no I/O), so the pass/fail/skip logic is unit-testable.
+
+    - corpus absent  -> SKIP (offline / fresh-clone safe; stays green on the sample line).
+    - corpus present, full scale, p50 < SLO -> PASS.
+    - corpus present, full scale, p50 >= SLO -> FAIL (blocking; non-zero exit).
+
+    The gate NEVER reports a blocking number without a full-scale corpus behind it — a sample-scale
+    report can only ever SKIP here (the honest sample line is printed separately by LatencyReport).
+    """
+    if not corpus_present:
+        return GateResult(
+            "skip", reason or "scale corpus absent — build with scripts/build_corpus.py",
+            slo_ms=slo_ms)
+    if report.scale != "full" or not report.samples_ms:
+        return GateResult("skip", reason or "no full-scale samples measured", slo_ms=slo_ms)
+    p50 = report.p50
+    if p50 < slo_ms:
+        return GateResult("pass", f"{report.n_docs} docs / {report.n_claims} claims",
+                          p50_ms=p50, slo_ms=slo_ms)
+    return GateResult("fail", f"{report.n_docs} docs / {report.n_claims} claims",
+                      p50_ms=p50, slo_ms=slo_ms)
+
+
 class Timer:
     """Monotonic wall-clock around one query. Use as a context manager; read .elapsed_ms after."""
 

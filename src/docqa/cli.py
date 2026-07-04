@@ -90,6 +90,98 @@ def _cmd_ask(args: argparse.Namespace) -> int:
     return 0
 
 
+# Probe queries for the blocking latency gate (BT24). They match the fact templates
+# scripts/build_corpus.py embeds, so each exercises the FULL pipeline (retrieve + propose + entail)
+# against real claims — the gate times pipeline cost, not answer correctness (the graded cases,
+# which reference the sample docs, can't run against the scale corpus).
+_LATENCY_PROBES = [
+    "Where is the platform team's primary gateway deployed?",
+    "How many days of paid time off do full-time staff accrue?",
+    "What is the approved tooling budget for the data team?",
+    "Which datacenter hosts the security team's gateway?",
+    "Who approves requests above the standard cap?",
+    "What is the document reference number for the travel policy?",
+    "How many vacation days does the finance department get?",
+    "What is the on-call rotation policy?",
+]
+
+
+def _run_latency_gate(settings, corpus: str, embedder, sample_corpus: str) -> int:
+    """BT24: the BLOCKING p50 gate on the full-scale corpus.
+
+    - scale corpus absent (offline / fresh clone) -> SKIP with an explicit reason, exit 0 (green).
+      Never reports a blocking number without a real scale corpus behind it.
+    - scale corpus present -> index it, time the probe queries (warm p50/p95), evaluate the gate,
+      exit non-zero iff p50 >= SLO. LLM-call time is visible via the per-query latency line.
+    """
+    import tempfile
+
+    from docqa.config import API_KEY_VAR
+    from docqa.core import answer_question
+    from docqa.entail import AnthropicEntailmentJudge
+    from docqa.generate import AnthropicGenerator
+    from docqa.index_store import IndexStore
+    from docqa.ingest import build_index
+    from docqa.latency import LatencyReport, Timer, evaluate_gate
+    from docqa.retrieval.hybrid import HybridRetriever
+
+    # A scale corpus is REQUIRED for a real number; the sample corpus can only ever SKIP.
+    corpus_present = (corpus != sample_corpus and Path(corpus).is_dir()
+                      and any(Path(corpus).iterdir()))
+    if not corpus_present:
+        report = LatencyReport(scale="full")
+        gate = evaluate_gate(report, float(settings.latency_slo_ms), corpus_present=False,
+                             reason=f"scale corpus '{corpus}' absent — build it with "
+                                    f"`python scripts/build_corpus.py` (offline/fresh-clone safe)")
+        print(f"[docqa] {gate.line()}", file=sys.stderr)
+        return 0  # skip is GREEN by design
+
+    import os
+    if not os.environ.get(API_KEY_VAR, "").strip():
+        # No key -> can't run the answer path at all; skip honestly rather than fake a number.
+        from docqa.latency import GateResult
+        gate = GateResult("skip", f"{API_KEY_VAR} not set — the answer path can't run",
+                          slo_ms=float(settings.latency_slo_ms))
+        print(f"[docqa] {gate.line()}", file=sys.stderr)
+        return 0
+
+    with tempfile.TemporaryDirectory() as tmp:
+        idx = str(Path(tmp) / "scale_index.db")
+        from docqa.claimizer_llm import AnthropicClaimizer
+        decomposer = AnthropicClaimizer(settings.gen_model)
+        print(f"[docqa] indexing scale corpus {corpus} (one-time, LLM claimizer)...",
+              file=sys.stderr)
+        build_index(corpus, idx, embedder, decomposer=decomposer)
+
+        store = IndexStore(idx)
+        retriever = HybridRetriever(store, embedder, rrf_k=settings.rrf_k,
+                                    dense_n=settings.dense_n, sparse_n=settings.sparse_n)
+        generator = AnthropicGenerator(settings.gen_model, settings.max_tokens)
+        judge = AnthropicEntailmentJudge(settings.gen_model)
+
+        def _one(q):
+            return answer_question(q, settings.k, retriever, generator, entail_judge=judge,
+                                   oos_floor=settings.oos_floor)
+
+        # Mandatory warmup (excluded) so cold model/embedder load doesn't distort steady state.
+        _one(_LATENCY_PROBES[0])
+        report = LatencyReport(scale="full")
+        for q in _LATENCY_PROBES:
+            with Timer() as t:
+                _one(q)
+            report.samples_ms.append(t.elapsed_ms)
+            report.hops_per_query.append(0)
+        claims = store.load_claims()
+        report.n_claims = len(claims)
+        report.n_docs = len({c.filename for c in claims})
+        report.n_words = sum(len(c.text.split()) for c in claims)
+
+    print(f"[docqa] {report.line()}", file=sys.stderr)
+    gate = evaluate_gate(report, float(settings.latency_slo_ms), corpus_present=True)
+    print(f"[docqa] {gate.line()}", file=sys.stderr)
+    return 1 if gate.blocking else 0
+
+
 def _cmd_eval(args: argparse.Namespace) -> int:
     import tempfile
 
@@ -105,6 +197,11 @@ def _cmd_eval(args: argparse.Namespace) -> int:
     corpus = args.corpus or DEFAULT_CORPUS
     cases = args.suite or DEFAULT_CASES
     embedder = get_embedder(settings.embed_model)
+
+    # --- BT24: blocking full-scale latency gate. Distinct from the case run — it times probe
+    # queries against the scale corpus and blocks on p50 >= SLO. Offline-safe: no corpus -> skip.
+    if args.latency:
+        return _run_latency_gate(settings, corpus, embedder, DEFAULT_CORPUS)
 
     # Build a throwaway index over the sample corpus (deterministic; not the user's index.db).
     with tempfile.TemporaryDirectory() as tmp:
@@ -252,6 +349,9 @@ def build_parser() -> argparse.ArgumentParser:
     ev.add_argument("--verbose", action="store_true", help="Print per-case detail to stderr.")
     ev.add_argument("--mutate", action="store_true",
                     help="Run the mutation sweep: each mutant must redden >=1 case.")
+    ev.add_argument("--latency", action="store_true",
+                    help="Run the BLOCKING full-scale p50 gate (needs --corpus scale_corpus/); "
+                         "skips green if the scale corpus is absent.")
     ev.set_defaults(func=_cmd_eval)
 
     return parser
