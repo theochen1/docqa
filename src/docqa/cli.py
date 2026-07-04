@@ -47,10 +47,13 @@ def _cmd_ask(args: argparse.Namespace) -> int:
         )
         return 1
 
+    from docqa.entail import AnthropicEntailmentJudge
+
     retriever = HybridRetriever(store, counting, rrf_k=settings.rrf_k,
                                 dense_n=settings.dense_n, sparse_n=settings.sparse_n)
     generator = AnthropicGenerator(settings.gen_model, settings.max_tokens)
-    result = answer_question(args.question, settings.k, retriever, generator)
+    judge = AnthropicEntailmentJudge(settings.gen_model)
+    result = answer_question(args.question, settings.k, retriever, generator, entail_judge=judge)
 
     # Query path must never re-embed the corpus (R-PERSIST): only the query is embedded.
     print(f"[docqa] corpus_embed_calls={report.corpus_embed_calls}", file=sys.stderr)
@@ -99,8 +102,12 @@ def _cmd_eval(args: argparse.Namespace) -> int:
             return HybridRetriever(IndexStore(idx), embedder, rrf_k=settings.rrf_k)
 
         generator = AnthropicGenerator(settings.gen_model, settings.max_tokens)
+        judge = None
+        if decomposer is not None:  # a key is present -> use the real entailment gate
+            from docqa.entail import AnthropicEntailmentJudge
+            judge = AnthropicEntailmentJudge(settings.gen_model)
         results, latency = run_eval(corpus, cases, build_retriever, generator, k=settings.k,
-                                    verbose=args.verbose)
+                                    verbose=args.verbose, entail_judge=judge)
         # Stamp corpus size onto the latency report (sample scale — INFO only, not the SLO).
         store = IndexStore(idx)
         claims = store.load_claims()

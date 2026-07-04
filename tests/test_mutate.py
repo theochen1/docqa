@@ -16,7 +16,13 @@ class ScriptedGen:
 
     def propose(self, question, claims):
         q = question.lower()
-        want = "15 days" if "pto" in q else "9am" if "office hours" in q else None
+        want = None
+        if "pto" in q:
+            want = "15 days"
+        elif "office hours" in q:
+            want = "9am"
+        elif "gw-south-1" in q:
+            want = "Portland"
         if want:
             for c in claims:
                 if want in c.text:

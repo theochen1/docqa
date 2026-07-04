@@ -38,3 +38,24 @@ cases:
       forbidden: ["$", "budget is", "FY27 marketing budget is"]
     guarantees: [refusal]
     notes: "On-topic domain but the specific fact is absent from every doc — must refuse, no number."
+
+  - id: T22-POS-ENTAIL
+    question: "Which datacenter is the gw-south-1 gateway deployed in?"
+    expect:
+      refused: false
+      gold: ["Portland"]
+      cite_files: ["region_registry.md"]
+    guarantees: [citations, entailment]
+    notes: "The span DOES entail the answer -> must emit (the entailment gate is not a refuse valve)."
+
+  - id: T22-ENTAIL-REDHERRING
+    question: "Which region is the gw-north-4 gateway deployed in?"
+    expect:
+      forbidden: ["Reykjavik", "deployed in Reykjavik"]
+    guarantees: [entailment]
+    notes: >
+      The gw-north-4 span co-locates the gateway and 'Reykjavik' but says NO region is assigned, so
+      the correct behavior is to refuse. This end-to-end case checks the real pipeline refuses +
+      never emits 'Reykjavik'. The GATE-SPECIFIC proof (that the entailment gate, not the LLM's own
+      restraint, drops a resolvable-but-unentailed claim) is pinned in tests/test_entail.py against
+      a stubbed proposer + the entailment-disabled/over-strict mutations.

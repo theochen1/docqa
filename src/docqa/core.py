@@ -22,11 +22,17 @@ def _assemble(verified: list[Claim]) -> str:
 def answer_from_proposal(
     proposal: dict,
     retrieved: list[ClaimRecord],
+    entail_judge=None,
 ) -> AnswerResult:
     """Verify a proposer's output against the retrieved claims and assemble the result.
 
     Pure + provider-agnostic: takes an already-normalized proposal ({claims, refusal_token}) and
     the retrieved records. This is the DISPOSE step, unit-testable without any LLM.
+
+    `entail_judge` (R-ENTAIL, BT18): optional callable (claim_text, span_text) -> bool. When
+    supplied, a claim that resolves (referential integrity) but whose span does NOT entail the
+    proposed claim is DROPPED. If dropping leaves nothing, we refuse. When None, only referential
+    integrity gates (the BT13 behavior).
     """
     by_id = {c.claim_id: c for c in retrieved}
 
@@ -47,10 +53,15 @@ def answer_from_proposal(
             if rec.claim_id in seen_records:
                 break  # this source already emitted; don't repeat the span
             vc = verify_claim(text, rec)
-            if vc is not None:
-                verified.append(vc)
-                seen_records.add(rec.claim_id)
-                break  # one resolving citation is enough for this claim
+            if vc is None:
+                continue
+            # R-ENTAIL: the cited span must actually support the proposed claim, not just resolve.
+            if entail_judge is not None and not entail_judge(text, rec.text):
+                vc.entailed = False
+                break  # unentailed -> drop this claim (don't emit an unsupported cell)
+            verified.append(vc)
+            seen_records.add(rec.claim_id)
+            break  # one resolving+entailing citation is enough for this claim
 
     if not verified:
         # Proposer answered but nothing resolved to a real source -> refuse, don't emit uncited.
@@ -59,8 +70,8 @@ def answer_from_proposal(
     return AnswerResult(answer_text=_assemble(verified), claims=verified, markers=Markers())
 
 
-def answer_question(question: str, k: int, retriever, generator) -> AnswerResult:
-    """Full thin-slice path. retriever + generator are injected (the pluggable seams)."""
+def answer_question(question: str, k: int, retriever, generator, entail_judge=None) -> AnswerResult:
+    """Full path. retriever + generator (+ optional entailment judge) are injected seams."""
     if not question or not question.strip():
         # Degenerate empty query — handled properly (reserved exit code) by the CLI at BT20b.
         return AnswerResult(markers=Markers(refused=True, refusal_token="INSUFFICIENT_EVIDENCE"))
@@ -71,7 +82,7 @@ def answer_question(question: str, k: int, retriever, generator) -> AnswerResult
 
     # The proposer sees id+text only; build_prompt's id_map is applied inside the generator.
     proposal = generator.propose(question, retrieved)
-    result = answer_from_proposal(proposal, retrieved)
+    result = answer_from_proposal(proposal, retrieved, entail_judge=entail_judge)
     # Stamp determinism/audit meta.
     result.meta = {
         "gen_model": getattr(generator, "model_id", "unknown"),
