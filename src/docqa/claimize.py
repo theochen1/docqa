@@ -96,3 +96,62 @@ def claimize(segments: list[TextSegment]) -> list[ClaimRecord]:
     for seg in segments:
         out.extend(claimize_segment(seg))
     return out
+
+
+# --- BT08: LLM decomposition path (SHOULD; falls back to the deterministic path) ---
+
+CLAIMIZER_VERSION_LLM = "llm-1"
+
+
+def _record_from_llm_claim(seg: TextSegment, sentence: str, value_span: str) -> ClaimRecord:
+    from docqa.canon import canonicalize as _canon
+
+    vtype, vcanon = _canon(value_span) if value_span else (ValueType.STRING, "")
+    subj, pred = _proposition_key(sentence, value_span)
+    return ClaimRecord(
+        claim_id=_claim_id(seg.filename, seg.locator, sentence),
+        filename=seg.filename,
+        locator=seg.locator,
+        text=sentence,
+        subject_norm=subj,
+        predicate_norm=pred,
+        value_span=value_span,
+        value_type=vtype,
+        value_canon=vcanon,
+        source_status=seg.source_status,
+    )
+
+
+def claimize_segment_llm(seg: TextSegment, decomposer) -> list[ClaimRecord]:
+    """Use an LLM decomposer to split a segment into atomic claims.
+
+    `decomposer` is any callable `(text) -> list[{"text","value_span"}]` (a thin adapter over a
+    Generator). On ANY failure or empty result, fall back to the deterministic path so ingestion
+    never breaks. Value canonicalization + proposition-key still run deterministically over the
+    LLM's claim text (the model proposes atoms; canon.py decides values).
+    """
+    try:
+        proposed = decomposer(seg.text)
+    except Exception:  # noqa: BLE001 - a flaky provider must not break indexing
+        return claimize_segment(seg)
+    if not proposed:
+        return claimize_segment(seg)
+
+    claims: list[ClaimRecord] = []
+    for item in proposed:
+        text = (item.get("text") or "").strip()
+        if not text:
+            continue
+        value_span = (item.get("value_span") or _extract_value(text)).strip()
+        claims.append(_record_from_llm_claim(seg, text, value_span))
+    return claims or claimize_segment(seg)
+
+
+def claimize_llm(segments: list[TextSegment], decomposer=None) -> list[ClaimRecord]:
+    """Claimize with the LLM path when a decomposer is supplied; else deterministic fallback."""
+    if decomposer is None:
+        return claimize(segments)
+    out: list[ClaimRecord] = []
+    for seg in segments:
+        out.extend(claimize_segment_llm(seg, decomposer))
+    return out
