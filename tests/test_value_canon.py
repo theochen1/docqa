@@ -46,7 +46,9 @@ def test_entity_casefolded():
 
 
 def test_percent_number():
-    assert canonicalize("92%")[1] == "92"
+    # Percent is kept distinct from the bare number (review fix): "92%" != "92".
+    assert canonicalize("92%")[1] == "92%"
+    assert canonicalize("92%")[1] != canonicalize("92")[1]
 
 
 def test_empty_is_empty_string():

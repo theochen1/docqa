@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import re
 
-from docqa.canon import canonicalize
+from docqa.canon import _NUMBER_WORDS, canonicalize
 from docqa.types import ClaimRecord, TextSegment, ValueType
 
 CLAIMIZER_VERSION = "det-1"
@@ -23,13 +23,19 @@ CLAIMIZER_VERSION = "det-1"
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 # Salient value spans to lift out of a sentence, in priority order.
 # Id tokens (gw-west-2) come BEFORE plain numbers so the trailing digit isn't lifted alone.
+# Spelled-out number words (three|fifteen|...) share the duration pattern so "three weeks" is
+# extracted and canonicalizes equal to "21 days". A leading minus is captured (not blocked by \b).
+_NUM_WORD_ALT = "|".join(_NUMBER_WORDS)
 _VALUE_PATTERNS = [
     re.compile(r"[$£€]\s?[\d,]+(?:\.\d+)?"),                                    # currency
-    re.compile(r"\b\d+\s+(?:days?|weeks?|months?|years?)\b", re.IGNORECASE),    # duration
+    re.compile(                                                                # duration
+        r"\b(?:\d+|" + _NUM_WORD_ALT + r")\s+(?:days?|weeks?|months?|years?)\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"\b\d{4}-\d{1,2}-\d{1,2}\b"),                                   # iso date
     re.compile(r"\b[A-Za-z]+\s+\d{1,2},?\s+\d{4}\b"),                           # textual date
     re.compile(r"\b[a-z]+(?:-[a-z0-9]+)+\b", re.IGNORECASE),                    # id token gw-west-2
-    re.compile(r"\b\d[\d,]*(?:\.\d+)?%?\b"),                                    # number / percent
+    re.compile(r"-?\d[\d,]*(?:\.\d+)?%?"),                                      # signed number/percent
 ]
 
 _STOPWORDS = {"the", "a", "an", "is", "are", "was", "were", "of", "to", "for", "per", "and"}

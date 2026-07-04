@@ -63,6 +63,20 @@ def _word_to_number(text: str) -> int | None:
     return total + current
 
 
+def _num_canon(digits: str, is_percent: bool) -> str | None:
+    """Canonical number string. Arbitrary-precision int when whole (no float 'inf' on huge values);
+    float only when a decimal point is present. Percent is suffixed so '92%' != '92'."""
+    try:
+        if "." in digits:
+            f = float(digits)
+            base = str(int(f)) if f.is_integer() else str(f)
+        else:
+            base = str(int(digits))  # arbitrary precision
+    except ValueError:
+        return None
+    return base + "%" if is_percent else base
+
+
 def canonicalize(value_span: str) -> tuple[ValueType, str]:
     """Map a raw value span to (type, canonical string). Deterministic + pure."""
     s = value_span.strip()
@@ -111,20 +125,20 @@ def canonicalize(value_span: str) -> tuple[ValueType, str]:
     ):
         return ValueType.ENTITY, s.casefold()
 
-    # number, incl. "fifteen (15)" -> 15 and "fifteen" -> 15
+    # number, incl. "fifteen (15)" -> 15 and "fifteen" -> 15. Percent is kept distinct from the
+    # bare number ("92%" != "92") and huge integers use arbitrary precision (no float 'inf').
+    is_percent = "%" in s
     pm = _PAREN_NUM_RE.search(s)
     if pm:
-        return ValueType.NUMBER, str(int(pm.group(1)))
+        return ValueType.NUMBER, _num_canon(pm.group(1), is_percent)
     nm = _INT_RE.search(s)
     if nm:
         digits = nm.group(0).replace(",", "")
-        try:
-            f = float(digits)
-            return ValueType.NUMBER, str(int(f)) if f.is_integer() else str(f)
-        except ValueError:
-            pass
+        canon = _num_canon(digits, is_percent)
+        if canon is not None:
+            return ValueType.NUMBER, canon
     wn = _word_to_number(s)
     if wn is not None:
-        return ValueType.NUMBER, str(wn)
+        return ValueType.NUMBER, _num_canon(str(wn), is_percent)
 
     return ValueType.STRING, " ".join(s.casefold().split())
