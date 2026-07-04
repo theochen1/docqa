@@ -1,0 +1,42 @@
+# --- docqa repo hygiene ---
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+
+# Virtualenv
+.venv/
+venv/
+
+# Secrets & local config
+.env
+
+# Index artifacts (built by `docqa index`, never committed)
+index.db
+index.db.tmp
+*.index.db
+
+# Model weight cache (downloaded on first run)
+.docqa_cache/
+.cache/
+
+# Full-scale latency corpus (built on demand by scripts/build_corpus.py, never committed)
+scale_corpus/
+
+# --- authoring / planning docs (NOT part of the OSS tool) ---
+# These are the AIOS planning artifacts; the shipped repo is just the tool.
+# process-log.md is Theo's — he writes PROCESS.md himself at the end.
+process-log.md
+requirements.md
+design.md
+algorithm-design.md
+test-plan.md
+tasks.md
+traceability.md
+research-notes.md
