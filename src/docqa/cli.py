@@ -24,15 +24,25 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 def _cmd_ask(args: argparse.Namespace) -> int:
     from docqa.config import Settings
     from docqa.core import answer_question
+    from docqa.tui import Spinner, quiet_ml_logs, render_answer, use_color
+
+    verbose = getattr(args, "verbose", False)
+
+    def diag(msg: str) -> None:
+        """Grader/debug diagnostics — only under --verbose so a normal answer stays clean."""
+        if verbose:
+            print(f"[docqa] {msg}", file=sys.stderr)
+
+    # Quiet the ML stack's advisory noise BEFORE the embedder imports (env flags read at import).
+    quiet_ml_logs()
+
     from docqa.embed import get_embedder
-    from docqa.generate import AnthropicGenerator
     from docqa.query_session import open_for_query
-    from docqa.retrieval.hybrid import HybridRetriever
 
     settings = Settings.load()
     embedder = get_embedder(settings.embed_model)
     store, counting, report = open_for_query(settings.index_path, embedder)
-    print(f"[docqa] {report.load_path}", file=sys.stderr)
+    diag(report.load_path)
     if report.load_path == "no index":
         print(
             f"ERROR: no index at {settings.index_path}. Run `docqa index <folder>` first.",
@@ -48,16 +58,18 @@ def _cmd_ask(args: argparse.Namespace) -> int:
         return 1
 
     from docqa.entail import AnthropicEntailmentJudge
+    from docqa.generate import AnthropicGenerator
+    from docqa.retrieval.hybrid import HybridRetriever
     from docqa.types import EXIT_EMPTY_CORPUS, EXIT_EMPTY_QUERY
 
     # Degenerate empty/whitespace query -> reserved exit code (BT20b), not a spoofable message.
     if not args.question or not args.question.strip():
-        print("[docqa] empty query", file=sys.stderr)
+        diag("empty query")
         return EXIT_EMPTY_QUERY
 
     # Empty index (empty corpus or all files skipped) -> reserved exit code.
     if store.count() == 0:
-        print("[docqa] empty corpus: index has zero claims", file=sys.stderr)
+        diag("empty corpus: index has zero claims")
         return EXIT_EMPTY_CORPUS
 
     retriever = HybridRetriever(store, counting, rrf_k=settings.rrf_k,
@@ -69,24 +81,17 @@ def _cmd_ask(args: argparse.Namespace) -> int:
     judge = AnthropicEntailmentJudge(settings.gen_model)
     max_hops = settings.max_hops if settings.multihop else 0
     hop_deadline_ms = settings.hop_deadline_ms if settings.multihop else None
-    result = answer_question(args.question, settings.k, retriever, generator, entail_judge=judge,
-                             oos_floor=settings.oos_floor, max_hops=max_hops,
-                             hop_deadline_ms=hop_deadline_ms)
+
+    with Spinner("Thinking"):
+        result = answer_question(args.question, settings.k, retriever, generator,
+                                 entail_judge=judge, oos_floor=settings.oos_floor,
+                                 max_hops=max_hops, hop_deadline_ms=hop_deadline_ms)
 
     # Query path must never re-embed the corpus (R-PERSIST): only the query is embedded.
-    print(f"[docqa] corpus_embed_calls={report.corpus_embed_calls}", file=sys.stderr)
+    diag(f"corpus_embed_calls={report.corpus_embed_calls}")
+    diag(f"hops={result.meta.get('hops', 0)} model={result.meta.get('gen_model', '?')}")
 
-    if result.markers.conflict:
-        print(result.answer_text)
-        for c in result.claims:
-            print(f"  - {c.citation.filename} {c.citation.locator}", file=sys.stderr)
-        return 0
-    if result.markers.refused:
-        print(result.markers.refusal_token or "INSUFFICIENT_EVIDENCE")
-        return 0
-    print(result.answer_text)
-    for c in result.claims:
-        print(f"  - {c.citation.filename} {c.citation.locator}", file=sys.stderr)
+    print(render_answer(result, color=use_color()))
     return 0
 
 
@@ -341,6 +346,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     ask = sub.add_parser("ask", help="Ask a question against the persisted index.")
     ask.add_argument("question", help="The natural-language question.")
+    ask.add_argument("--verbose", "-v", action="store_true",
+                     help="Print pipeline diagnostics (load path, embed calls, hops) to stderr.")
     ask.set_defaults(func=_cmd_ask)
 
     ev = sub.add_parser("eval", help="Run the eval harness against the sample corpus.")
